@@ -463,12 +463,29 @@ __global__ void preprocess_weight_kernel(
     weight_conv[out_c * (hk * ci) + k_in_c] = val;
 }
 
+// GPU Kernel: 添加 bias
+// output: [ho, ci] 每个输出位置添加对应 channel 的 bias
+__global__ void add_bias_kernel(
+    fp16_t* __restrict__ output,       // 输出 [ho, ci]
+    const fp16_t* __restrict__ bias,   // bias [ci]
+    int ho, int ci)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;  // 输出位置 [0, ho)
+    int c = blockIdx.y * blockDim.y + threadIdx.y;  // channel [0, ci)
+    
+    if (h >= ho || c >= ci) return;
+    
+    // 添加 bias
+    output[h * ci + c] += bias[c];
+}
+
 void casual_conv1d_block_run()
 {
-    int batch = 1;
-    int hi = 2048;
-    int ci = 64;
-    int hk = 4;
+    // ========== 配置参数 ==========
+    int batch = 1;  // 批次大小（已测试：batch=1,2 可以工作，bias 已支持）
+    int hi = 2048;  // 输入序列长度
+    int ci = 64;    // 输入通道数
+    int hk = 4;     // 卷积核大小
     int pad = hk - 1;
 
     // define gemm inputs a,b,c
@@ -498,56 +515,71 @@ void casual_conv1d_block_run()
 // #ifdef CUSTOMIZED_INT
     // customized_vector_2d_in(host_in, ci, hi, ld_in);
     // customized_vector_2d_weight(host_w, ci, hk, ld_w);
-    for (int i = 0; i < ci; i++) host_bias[i] = 0.0f;
+    
+    // 初始化 bias 为非零值（随机或固定值）
+    for (int i = 0; i < ci; i++) {
+        host_bias[i] = 0.1f + (float)i * 0.01f;  // 0.1, 0.11, 0.12, ... 便于验证
+    }
+    
 // #else
     rand_vector_2d(host_in, batch, ci, hi, ld_in, 1.0, 2.0);
     rand_vector_2d(host_w, batch, ci, hk, ld_w, 1.0, 2.0);
 // #endif
     // for(int i=0; i<hi*ci; i++) {if (i<100) {printf("in[%d], %f \n", i, host_in[i]);}}
     // for(int i=0; i<ci*hk; i++) {printf("w[%d], %f \n", i, host_w[i]);}
-    float16 *fp16_in, *fp16_w;
-    //convert fp32 input into fp16 on host
+    float16 *fp16_in, *fp16_w, *fp16_bias;
+    //convert fp32 input/weight/bias into fp16 on host
     fp16_in = (float16*)malloc((batch*hi*ci)*sizeof(float16));
     fp16_w = (float16*)malloc((batch*ci*hk)*sizeof(float16));
+    fp16_bias = (float16*)malloc(ci*sizeof(float16));
     for(int i=0; i<batch*hi*ci; i++)fp16_in[i]=__float2half_rn(host_in[i]);
     for(int i=0; i<batch*ci*hk; i++)fp16_w[i]=__float2half_rn(host_w[i]);
+    for(int i=0; i<ci; i++)fp16_bias[i]=__float2half_rn(host_bias[i]);
     // for(int i=0; i<ci*hk; i++) {printf("fp16_w[%d], %f \n", i, (float)(fp16_w[i]));}
 
     // ========== Host 端预处理：转置 ==========
-    printf("在 Host 上执行转置操作...\n");
+    printf("在 Host 上执行转置操作 (batch=%d)...\n", batch);
     
-    float16 *fp16_in_transposed;  // 转置后的输入 [hi, ci]
+    float16 *fp16_in_transposed;  // 转置后的输入 [batch, hi, ci]
     fp16_in_transposed = (float16*)malloc((batch*hi * ci)*sizeof(float16));
     
-    // input [ci,hi] 转置为 [hi,ci] - 在 host 上显式执行
-    transpose_fp16(fp16_in, fp16_in_transposed, ci, hi);
-    printf("✓ 转置完成：[%d, %d] -> [%d, %d]\n", ci, hi, hi, ci);
+    // input [batch, ci, hi] 转置为 [batch, hi, ci] - 在 host 上显式执行
+    // 对每个 batch 进行转置
+    for (int b = 0; b < batch; b++) {
+        transpose_fp16(fp16_in + b*ci*hi, 
+                      fp16_in_transposed + b*hi*ci, 
+                      ci, hi);
+    }
+    printf("✓ 转置完成：[%d, %d, %d] -> [%d, %d, %d]\n", batch, ci, hi, batch, hi, ci);
 
 #if ENABLE_HOST_VERIFICATION
     // ========== Host 端完整预处理（用于验证 GPU kernel 正确性）==========
-    printf("执行完整 Host 端预处理用于验证...\n");
+    printf("执行完整 Host 端预处理用于验证 (batch=%d)...\n", batch);
     
     float16 *fp16_in_pad, *fp16_a_host, *fp16_b_host;
-    fp16_in_pad = (float16*)malloc((batch*(hi+pad) * ci)*sizeof(float16));
-    fp16_a_host = (float16*)malloc(lda*m*sizeof(float16));
+    fp16_in_pad = (float16*)malloc(batch*(hi+pad)*ci*sizeof(float16));  // 修复括号
+    fp16_a_host = (float16*)malloc(batch*lda*m*sizeof(float16));
     fp16_b_host = (float16*)malloc(ldb*n*sizeof(float16));
     
-    // add pad for input
-    for(int i = 0; i < pad * ci; i++) {
-        fp16_in_pad[i] = 0;
-    }
-    for(int i = 0; i < hi * ci; i++) {
-        fp16_in_pad[i + pad * ci] = fp16_in_transposed[i];
-    }
-    
-    // input with pad, img2col
-    for(int i=0; i < ho; i++) {
-        for (int j = 0; j < hk * ci; j++) {
-            fp16_a_host[i * hk *ci + j] = fp16_in_pad[i * ci + j];
+    // 对每个 batch 进行预处理
+    for (int b = 0; b < batch; b++) {
+        // add pad for input
+        for(int i = 0; i < pad * ci; i++) {
+            fp16_in_pad[b*(hi+pad)*ci + i] = 0;
+        }
+        for(int i = 0; i < hi * ci; i++) {
+            fp16_in_pad[b*(hi+pad)*ci + i + pad * ci] = fp16_in_transposed[b*hi*ci + i];
+        }
+        
+        // input with pad, img2col
+        for(int i=0; i < ho; i++) {
+            for (int j = 0; j < hk * ci; j++) {
+                fp16_a_host[b*lda*m + i * hk *ci + j] = fp16_in_pad[b*(hi+pad)*ci + i * ci + j];
+            }
         }
     }
     
-    //convert dw weight to common weight
+    //convert dw weight to common weight（只需要一次，所有 batch 共享）
     for(int i=0; i < ci * hk * ci; i++) {
         fp16_b_host[i] = 0;
     }
@@ -560,44 +592,47 @@ void casual_conv1d_block_run()
     }
 
     float *host_a, *host_b;
-    host_a = (float*)malloc(lda*m*sizeof(float));
+    host_a = (float*)malloc(batch*lda*m*sizeof(float));  // 修复：支持 batch
     host_b = (float*)malloc(ldb*n*sizeof(float));
-    for(int i=0; i<lda*m; i++)host_a[i]=(float)(fp16_a_host[i]);
+    for(int i=0; i<batch*lda*m; i++)host_a[i]=(float)(fp16_a_host[i]);  // 修复：遍历所有 batch
     for(int i=0; i<ldb*n; i++)host_b[i]=(float)(fp16_b_host[i]);
 #endif
 
     // ========== GPU 预处理 ==========
-    float16 *dev_in_transposed, *dev_w, *dev_a, *dev_b, *dev_c;
+    float16 *dev_in_transposed, *dev_w, *dev_a, *dev_b, *dev_c, *dev_bias;
     float16 *fp16_c, *fp16_c_nch;
-    fp16_c = (float16*)malloc(ldc*m*sizeof(float16));
-    fp16_c_nch = (float16*)malloc(ldc*m*sizeof(float16));
+    fp16_c = (float16*)malloc(batch*ldc*m*sizeof(float16));
+    fp16_c_nch = (float16*)malloc(batch*ldc*m*sizeof(float16));
     
-    // 分配 GPU 内存
-    HIP_CALL(hipMalloc(&dev_in_transposed, hi*ci*sizeof(float16)));  // 转置后的输入 [hi, ci]
-    HIP_CALL(hipMalloc(&dev_w, ci*hk*sizeof(float16)));              // 权重 [ci, hk]
-    HIP_CALL(hipMalloc(&dev_a, lda*m*sizeof(float16)));              // GEMM A [ho, hk*ci]
-    HIP_CALL(hipMalloc(&dev_b, ldb*n*sizeof(float16)));              // GEMM B [ci, hk*ci]
-    HIP_CALL(hipMalloc(&dev_c, ldc*m*sizeof(float16)));              // GEMM C [ho, ci]
+    // 分配 GPU 内存 - 支持 batch 维度
+    HIP_CALL(hipMalloc(&dev_in_transposed, batch*hi*ci*sizeof(float16)));  // 转置后的输入 [batch, hi, ci]
+    HIP_CALL(hipMalloc(&dev_w, ci*hk*sizeof(float16)));                    // 权重 [ci, hk]
+    HIP_CALL(hipMalloc(&dev_a, batch*lda*m*sizeof(float16)));              // GEMM A [batch, ho, hk*ci]
+    HIP_CALL(hipMalloc(&dev_b, ldb*n*sizeof(float16)));                    // GEMM B [ci, hk*ci]
+    HIP_CALL(hipMalloc(&dev_c, batch*ldc*m*sizeof(float16)));              // GEMM C [batch, ho, ci]
+    HIP_CALL(hipMalloc(&dev_bias, ci*sizeof(float16)));                    // bias [ci]
     
     // 将转置后的数据拷贝到 GPU
-    printf("传输转置后的数据到 GPU...\n");
-    HIP_CALL(hipMemcpy(dev_in_transposed, fp16_in_transposed, hi*ci*sizeof(float16), hipMemcpyHostToDevice));
+    printf("传输转置后的数据和 bias 到 GPU (batch=%d)...\n", batch);
+    HIP_CALL(hipMemcpy(dev_in_transposed, fp16_in_transposed, batch*hi*ci*sizeof(float16), hipMemcpyHostToDevice));
     HIP_CALL(hipMemcpy(dev_w, fp16_w, ci*hk*sizeof(float16), hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_bias, fp16_bias, ci*sizeof(float16), hipMemcpyHostToDevice));
     
-    // 调用预处理 kernel
-    // 输入预处理：[hi, ci] -> [ho, hk*ci] (已转置)
-    printf("在 GPU 上执行 padding + img2col...\n");
-    {
-        dim3 block_dim(16, 16);  // 线程块大小
-        dim3 grid_dim((ho + block_dim.x - 1) / block_dim.x, 
-                      (hk*ci + block_dim.y - 1) / block_dim.y);
+    // 调用预处理 kernel - 循环处理每个 batch
+    // 输入预处理：[batch, hi, ci] -> [batch, ho, hk*ci] (已转置)
+    printf("在 GPU 上执行 padding + img2col (batch=%d)...\n", batch);
+    dim3 block_dim(16, 16);  // 线程块大小
+    dim3 grid_dim((ho + block_dim.x - 1) / block_dim.x, 
+                  (hk*ci + block_dim.y - 1) / block_dim.y);
+    
+    for (int b = 0; b < batch; b++) {
         preprocess_input_kernel<<<grid_dim, block_dim>>>(
-            reinterpret_cast<fp16_t*>(dev_in_transposed), 
-            reinterpret_cast<fp16_t*>(dev_a), 
+            reinterpret_cast<fp16_t*>(dev_in_transposed + b*hi*ci), 
+            reinterpret_cast<fp16_t*>(dev_a + b*lda*m), 
             ci, hi, ho, hk, pad);
-        HIP_CALL(hipGetLastError());
-        HIP_CALL(hipDeviceSynchronize());
     }
+    HIP_CALL(hipGetLastError());
+    HIP_CALL(hipDeviceSynchronize());
     
     // 权重预处理：[ci, hk] -> [ci, hk*ci]
     printf("在 GPU 上执行权重转换...\n");
@@ -618,30 +653,32 @@ void casual_conv1d_block_run()
 #if ENABLE_HOST_VERIFICATION
     // ========== 验证 GPU 预处理结果与 Host 端结果对比 ==========
     {
-        float16 *fp16_a_gpu = (float16*)malloc(lda*m*sizeof(float16));
+        float16 *fp16_a_gpu = (float16*)malloc(batch*lda*m*sizeof(float16));  // 修复：支持 batch
         float16 *fp16_b_gpu = (float16*)malloc(ldb*n*sizeof(float16));
         
-        HIP_CALL(hipMemcpy(fp16_a_gpu, dev_a, lda*m*sizeof(float16), hipMemcpyDeviceToHost));
+        HIP_CALL(hipMemcpy(fp16_a_gpu, dev_a, batch*lda*m*sizeof(float16), hipMemcpyDeviceToHost));  // 修复
         HIP_CALL(hipMemcpy(fp16_b_gpu, dev_b, ldb*n*sizeof(float16), hipMemcpyDeviceToHost));
         
-        // 验证输入预处理结果
+        // 验证输入预处理结果（所有 batch）
         bool input_match = true;
         int input_err_count = 0;
-        for(int i=0; i<lda*m && input_err_count < 10; i++) {
+        for(int i=0; i<batch*lda*m && input_err_count < 10; i++) {  // 修复：遍历所有 batch
             float diff = fabs((float)fp16_a_gpu[i] - (float)fp16_a_host[i]);
             if(diff > 1e-5) {
                 if(input_err_count < 5) {
-                    printf("输入预处理差异 [%d]: GPU=%f, Host=%f, diff=%f\n", 
-                           i, (float)fp16_a_gpu[i], (float)fp16_a_host[i], diff);
+                    int b = i / (lda*m);
+                    int offset = i % (lda*m);
+                    printf("输入预处理差异 [batch=%d, idx=%d]: GPU=%f, Host=%f, diff=%f\n", 
+                           b, offset, (float)fp16_a_gpu[i], (float)fp16_a_host[i], diff);
                 }
                 input_match = false;
                 input_err_count++;
             }
         }
-        printf("✓ 输入预处理验证（GPU vs Host）: %s (错误数=%d/%d)\n", 
-               input_match?"通过":"失败", input_err_count, lda*m);
+        printf("✓ 输入预处理验证（GPU vs Host, batch=%d）: %s (错误数=%d/%d)\n", 
+               batch, input_match?"通过":"失败", input_err_count, batch*lda*m);
         
-        // 验证权重预处理结果
+        // 验证权重预处理结果（所有 batch 共享）
         bool weight_match = true;
         int weight_err_count = 0;
         for(int i=0; i<ldb*n && weight_err_count < 10; i++) {
@@ -663,11 +700,14 @@ void casual_conv1d_block_run()
     }
 #endif
 
-    printf("m:%d,n:%d,k:%d,lda:%d,ldb:%d,ldc:%d\n",  m, n, k, lda, ldb, ldc); fflush(stdout);
+    printf("batch:%d, m:%d,n:%d,k:%d,lda:%d,ldb:%d,ldc:%d\n",  batch, m, n, k, lda, ldb, ldc); fflush(stdout);
     // gemm_rcr(host_a, host_b, host_c, m,n,k,lda,ldb,ldc);
     // casual_conv1d_rcr(host_in, host_c, host_w, host_bias, batch, ci, ci, hi, hk, pad, 1, ci);
      causal_conv1d_depthwise(host_in, host_w, host_bias, host_c, batch, ci, hi, hk);
     // causal_conv1d_img2col(host_in, host_w, host_bias, host_c, batch, ci, hi, ci, hk, 1);
+    
+    // ========== 执行 GEMM（循环处理每个 batch）==========
+    printf("在 GPU 上执行 GEMM (batch=%d)...\n", batch);
     {
         constexpr int BLOCK_M = 32;
         constexpr int BLOCK_N = 32;
@@ -681,16 +721,59 @@ void casual_conv1d_block_run()
 
         auto gdim = dim3(m / BLOCK_M, n / BLOCK_N);
         auto kernel = matrix_core_kernel_block_v2<256, BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K>;
-        kernel<<<gdim, 256>>>(dev_a, dev_b, dev_c, k, lda, ldb, ldc);
+        
+        // 循环处理每个 batch
+        for (int b = 0; b < batch; b++) {
+            kernel<<<gdim, 256>>>(
+                dev_a + b*lda*m,    // GEMM A for batch b
+                dev_b,              // 权重（所有 batch 共享）
+                dev_c + b*ldc*m,    // GEMM C for batch b
+                k, lda, ldb, ldc);
+        }
+        HIP_CALL(hipGetLastError());
+        HIP_CALL(hipDeviceSynchronize());
+        
+        // ========== 添加 bias ==========
+        printf("在 GPU 上添加 bias (batch=%d)...\n", batch);
+        {
+            dim3 bias_block_dim(16, 16);
+            dim3 bias_grid_dim((ho + bias_block_dim.x - 1) / bias_block_dim.x,
+                              (ci + bias_block_dim.y - 1) / bias_block_dim.y);
+            
+            // 对每个 batch 添加 bias
+            for (int b = 0; b < batch; b++) {
+                add_bias_kernel<<<bias_grid_dim, bias_block_dim>>>(
+                    reinterpret_cast<fp16_t*>(dev_c + b*ldc*m),  // 输出 [ho, ci] for batch b
+                    reinterpret_cast<fp16_t*>(dev_bias),          // bias [ci]
+                    ho, ci);
+            }
+            HIP_CALL(hipGetLastError());
+            HIP_CALL(hipDeviceSynchronize());
+        }
+        printf("✓ bias 添加完成\n");
 
-        HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
-        transpose_fp16(fp16_c, fp16_c_nch, m, n);
+        // 将结果拷贝回 host
+        HIP_CALL(hipMemcpy(fp16_c, dev_c, batch*ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
+        
+        // 转置输出（每个 batch）
+        for (int b = 0; b < batch; b++) {
+            transpose_fp16(fp16_c + b*ldc*m, fp16_c_nch + b*ldc*m, m, n);
+        }
+
 #if 1
-        // bool res = valid_vector(host_c, fp16_c, m*n, 1e-3);
-        bool res = valid_vector(host_c, fp16_c_nch, m*n, 1e-2);
-        printf("[%dx%dx%d, block_gemm_%dx%dx%d_%dx%dx%d_%dx%dx%d], %s", m, n, k,
+        // 验证结果（每个 batch）
+        bool all_valid = true;
+        for (int b = 0; b < batch; b++) {
+            bool res = valid_vector(host_c + b*m*n, fp16_c_nch + b*m*n, m*n, 1e-2);
+            if (!res) {
+                printf("Batch %d: FAIL\n", b);
+                all_valid = false;
+            }
+        }
+        printf("[batch=%d, %dx%dx%d, block_gemm_%dx%dx%d_%dx%dx%d_%dx%dx%d], %s", 
+            batch, m, n, k,
             BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K,
-            res?"valid":"fail");fflush(stdout);
+            all_valid?"valid":"fail");fflush(stdout);
         printf("\n"); fflush(stdout);
 #endif
     }
@@ -703,6 +786,7 @@ void casual_conv1d_block_run()
     free(host_bias);
     free(fp16_in);
     free(fp16_w);
+    free(fp16_bias);
     free(fp16_in_transposed);
     free(fp16_c);
     free(fp16_c_nch);
@@ -718,6 +802,7 @@ void casual_conv1d_block_run()
     // 释放 GPU 内存
     HIP_CALL(hipFree(dev_in_transposed));
     HIP_CALL(hipFree(dev_w));
+    HIP_CALL(hipFree(dev_bias));
     HIP_CALL(hipFree(dev_a));
     HIP_CALL(hipFree(dev_b));
     HIP_CALL(hipFree(dev_c));
