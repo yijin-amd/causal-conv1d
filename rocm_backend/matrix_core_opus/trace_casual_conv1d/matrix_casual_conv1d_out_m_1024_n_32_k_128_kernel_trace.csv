@@ -1,5 +1,0 @@
-"Kind","Agent_Id","Queue_Id","Stream_Id","Thread_Id","Dispatch_Id","Kernel_Id","Kernel_Name","Correlation_Id","Start_Timestamp","End_Timestamp","LDS_Block_Size","Scratch_Size","VGPR_Count","Accum_VGPR_Count","SGPR_Count","Workgroup_Size_X","Workgroup_Size_Y","Workgroup_Size_Z","Grid_Size_X","Grid_Size_Y","Grid_Size_Z"
-"KERNEL_DISPATCH","Agent 9",1,0,2779347,1,8,"__amd_rocclr_copyBuffer",7,11507991775219519,11507991775224159,0,0,16,0,32,512,1,1,512,1,1
-"KERNEL_DISPATCH","Agent 9",1,0,2779347,2,13,"_Z23preprocess_input_kernelPKDF16_PDF16_iiiii",8,11507991775868076,11507991775882676,0,0,8,0,32,16,16,1,2048,256,1
-"KERNEL_DISPATCH","Agent 9",1,0,2779347,3,12,"_Z24preprocess_weight_kernelPKDF16_PDF16_ii",11,11507991775916596,11507991775920196,0,0,8,0,16,16,16,1,64,256,1
-"KERNEL_DISPATCH","Agent 9",1,0,2779347,4,11,"void matrix_core_kernel_block_v2<256, 32, 32, 16, 2, 2, 1, 16, 16, 16>(void const*, void const*, void*, int, int, int, int)",16,11507991777442674,11507991777458754,0,0,16,0,32,256,1,1,16384,2,1
