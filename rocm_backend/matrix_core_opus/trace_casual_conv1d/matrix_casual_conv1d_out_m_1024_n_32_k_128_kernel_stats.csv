@@ -1,0 +1,5 @@
+"Name","Calls","TotalDurationNs","AverageNs","Percentage","MinNs","MaxNs","StdDev"
+"void matrix_core_kernel_block_v2<256, 32, 32, 16, 2, 2, 1, 16, 16, 16>(void const*, void const*, void*, int, int, int, int)",1,16080,16080.000000,41.32,16080,16080,0.00000000e+00
+"_Z23preprocess_input_kernelPKDF16_PDF16_iiiii",1,14600,14600.000000,37.51,14600,14600,0.00000000e+00
+"__amd_rocclr_copyBuffer",1,4640,4640.000000,11.92,4640,4640,0.00000000e+00
+"_Z24preprocess_weight_kernelPKDF16_PDF16_ii",1,3600,3600.000000,9.25,3600,3600,0.00000000e+00
