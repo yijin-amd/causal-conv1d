@@ -15,9 +15,9 @@
 
 #include <opus/opus.hpp>
 
-#define LOCAL_SCRATCH 0
-#define RAND_INT 0
-#define CUSTOMIZED_INT 1
+// #define LOCAL_SCRATCH 0
+// #define RAND_INT 0
+// #define CUSTOMIZED_INT 1
 #define ENABLE_HOST_VERIFICATION 1  // 设置为 0 则完全跳过 host 端预处理验证
 #define ENABLE_SILU_ACTIVATION 0    // 设置为 0 则只添加 bias，不应用 SiLU activation
 
@@ -489,26 +489,6 @@ __global__ void add_bias_kernel(
     output[h * ci + c] += bias[c];
 }
 
-// GPU Kernel: SiLU activation
-// SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
-__global__ void silu_activation_kernel(
-    fp16_t* __restrict__ output,       // 输出 [ho, ci] (in-place)
-    int ho, int ci)
-{
-    int h = blockIdx.x * blockDim.x + threadIdx.x;  // 输出位置 [0, ho)
-    int c = blockIdx.y * blockDim.y + threadIdx.y;  // channel [0, ci)
-    
-    if (h >= ho || c >= ci) return;
-    
-    int idx = h * ci + c;
-    float x = (float)output[idx];
-    
-    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
-    float sigmoid_x = 1.0f / (1.0f + expf(-x));
-    float silu_x = x * sigmoid_x;
-    
-    output[idx] = (fp16_t)silu_x;
-}
 
 // GPU Kernel: 融合的 bias + SiLU activation (更高效)
 // 将 bias 加法和 SiLU activation 融合到一个 kernel 中，减少内存访问
@@ -538,7 +518,7 @@ __global__ void add_bias_silu_fused_kernel(
 void casual_conv1d_block_run()
 {
     // ========== 配置参数 ==========
-    int batch = 1;  // 批次大小（已测试：batch=1,2 可以工作，bias + SiLU 已支持）
+    int batch = 4;  // 批次大小（已测试：batch=1 稳定运行，batch=2 计算正确但退出时崩溃）
     int hi = 2048;  // 输入序列长度
     int ci = 64;    // 输入通道数
     int hk = 4;     // 卷积核大小
@@ -579,17 +559,17 @@ void casual_conv1d_block_run()
     
 // #else
     rand_vector_2d(host_in, batch, ci, hi, ld_in, 1.0, 2.0);
-    rand_vector_2d(host_w, batch, ci, hk, ld_w, 1.0, 2.0);
+    rand_vector_2d(host_w, 1, ci, hk, ld_w, 1.0, 2.0);
 // #endif
     // for(int i=0; i<hi*ci; i++) {if (i<100) {printf("in[%d], %f \n", i, host_in[i]);}}
     // for(int i=0; i<ci*hk; i++) {printf("w[%d], %f \n", i, host_w[i]);}
     float16 *fp16_in, *fp16_w, *fp16_bias;
     //convert fp32 input/weight/bias into fp16 on host
     fp16_in = (float16*)malloc((batch*hi*ci)*sizeof(float16));
-    fp16_w = (float16*)malloc((batch*ci*hk)*sizeof(float16));
+    fp16_w = (float16*)malloc((ci*hk)*sizeof(float16));
     fp16_bias = (float16*)malloc(ci*sizeof(float16));
     for(int i=0; i<batch*hi*ci; i++)fp16_in[i]=__float2half_rn(host_in[i]);
-    for(int i=0; i<batch*ci*hk; i++)fp16_w[i]=__float2half_rn(host_w[i]);
+    for(int i=0; i<ci*hk; i++)fp16_w[i]=__float2half_rn(host_w[i]);
     for(int i=0; i<ci; i++)fp16_bias[i]=__float2half_rn(host_bias[i]);
     // for(int i=0; i<ci*hk; i++) {printf("fp16_w[%d], %f \n", i, (float)(fp16_w[i]));}
 
@@ -663,9 +643,9 @@ void casual_conv1d_block_run()
     // 分配 GPU 内存 - 支持 batch 维度
     HIP_CALL(hipMalloc(&dev_in_transposed, batch*hi*ci*sizeof(float16)));  // 转置后的输入 [batch, hi, ci]
     HIP_CALL(hipMalloc(&dev_w, ci*hk*sizeof(float16)));                    // 权重 [ci, hk]
-    HIP_CALL(hipMalloc(&dev_a, batch*lda*m*sizeof(float16)));              // GEMM A [batch, ho, hk*ci]
-    HIP_CALL(hipMalloc(&dev_b, ldb*n*sizeof(float16)));                    // GEMM B [ci, hk*ci]
-    HIP_CALL(hipMalloc(&dev_c, batch*ldc*m*sizeof(float16)));              // GEMM C [batch, ho, ci]
+    HIP_CALL(hipMalloc(&dev_a, batch*m*lda*sizeof(float16)));              // GEMM A [batch, ho, hk*ci]
+    HIP_CALL(hipMalloc(&dev_b, n*ldb*sizeof(float16)));                    // GEMM B [ci, hk*ci]
+    HIP_CALL(hipMalloc(&dev_c, batch*m*ldc*sizeof(float16)));              // GEMM C [batch, ho, ci]
     HIP_CALL(hipMalloc(&dev_bias, ci*sizeof(float16)));                    // bias [ci]
     
     // 将转置后的数据拷贝到 GPU
@@ -822,7 +802,6 @@ void casual_conv1d_block_run()
 #else
         printf("✓ bias 添加完成\n");
 #endif
-
         // 将结果拷贝回 host
         HIP_CALL(hipMemcpy(fp16_c, dev_c, batch*ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
         
@@ -831,7 +810,7 @@ void casual_conv1d_block_run()
             transpose_fp16(fp16_c + b*ldc*m, fp16_c_nch + b*ldc*m, m, n);
         }
 
-#if 1
+#if ENABLE_HOST_VERIFICATION
         // 验证结果（每个 batch）
         bool all_valid = true;
         for (int b = 0; b < batch; b++) {
