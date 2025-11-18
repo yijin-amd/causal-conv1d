@@ -1,0 +1,49 @@
+╔════════════════════════════════════════════════════════════════╗
+║           Causal Conv1D GPU 加速 - 快速开始                   ║
+╚════════════════════════════════════════════════════════════════╝
+
+📖 文档索引
+  README_INDEX.md          # 从这里开始！
+
+🚀 快速运行
+  # 编译并运行
+  bash run_casual_conv1d_ref.sh
+
+⚡ 性能基准测试（推荐）
+  # 快速测试（10次）
+  python benchmark_performance.py -n 10
+  
+  # 标准测试（100次）
+  python benchmark_performance.py
+  
+  # 查看结果
+  cat benchmark_results/benchmark_*.txt
+
+🎛️ 配置开关
+  # 编辑 casual_conv1d_opus.cpp
+  #define ENABLE_SILU_ACTIVATION 1     # 1=启用 SiLU, 0=禁用
+  #define ENABLE_HOST_VERIFICATION 1   # 1=启用验证, 0=纯GPU
+  int batch = 1;                        # 批处理大小
+
+  # 修改后需要重新编译！
+  hipcc -x hip -std=c++17 casual_conv1d_opus.cpp -o casual_conv1d_opus.exe ...
+
+📊 性能分析
+  # 使用 rocprofv3 收集性能数据
+  rocprofv3 --hip-api --stats -o perf ./casual_conv1d_opus.exe
+  
+  # 可视化
+  python visualize_performance.py perf_hip_api_stats.csv perf_kernel_stats.csv ./
+
+📚 核心文档
+  BENCHMARK_GUIDE.md       # 性能测试指南 ⭐
+  SILU_SWITCH_GUIDE.md     # SiLU 开关使用
+  TROUBLESHOOTING.md       # 故障排查
+  IMPLEMENTATION_OVERVIEW.md  # 整体架构
+
+🆘 遇到问题？
+  1. 查看 TROUBLESHOOTING.md
+  2. 检查 benchmark_results/ 目录下的报告
+  3. 运行 python benchmark_performance.py -n 10 验证基本功能
+
+╚════════════════════════════════════════════════════════════════╝

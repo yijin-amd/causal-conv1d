@@ -19,6 +19,7 @@
 #define RAND_INT 0
 #define CUSTOMIZED_INT 1
 #define ENABLE_HOST_VERIFICATION 1  // 设置为 0 则完全跳过 host 端预处理验证
+#define ENABLE_SILU_ACTIVATION 0    // 设置为 0 则只添加 bias，不应用 SiLU activation
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define HIP_CALL(call) do{  \
@@ -286,7 +287,16 @@ void causal_conv1d_depthwise(
                     float w = weight[c * kernel_size + k];
                     sum += val * w;
                 }
+                
+#if ENABLE_SILU_ACTIVATION
+                // 应用 SiLU activation: SiLU(x) = x / (1 + exp(-x))
+                float sigmoid_x = 1.0f / (1.0f + expf(-sum));
+                float silu_x = sum * sigmoid_x;
+                output[n * C * H + c * H + t] = silu_x;
+#else
+                // 不应用 activation
                 output[n * C * H + c * H + t] = sum;
+#endif
             }
         }
     }
@@ -479,10 +489,56 @@ __global__ void add_bias_kernel(
     output[h * ci + c] += bias[c];
 }
 
+// GPU Kernel: SiLU activation
+// SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+__global__ void silu_activation_kernel(
+    fp16_t* __restrict__ output,       // 输出 [ho, ci] (in-place)
+    int ho, int ci)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;  // 输出位置 [0, ho)
+    int c = blockIdx.y * blockDim.y + threadIdx.y;  // channel [0, ci)
+    
+    if (h >= ho || c >= ci) return;
+    
+    int idx = h * ci + c;
+    float x = (float)output[idx];
+    
+    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+    float sigmoid_x = 1.0f / (1.0f + expf(-x));
+    float silu_x = x * sigmoid_x;
+    
+    output[idx] = (fp16_t)silu_x;
+}
+
+// GPU Kernel: 融合的 bias + SiLU activation (更高效)
+// 将 bias 加法和 SiLU activation 融合到一个 kernel 中，减少内存访问
+__global__ void add_bias_silu_fused_kernel(
+    fp16_t* __restrict__ output,       // 输出 [ho, ci] (in-place)
+    const fp16_t* __restrict__ bias,   // bias [ci]
+    int ho, int ci)
+{
+    int h = blockIdx.x * blockDim.x + threadIdx.x;  // 输出位置 [0, ho)
+    int c = blockIdx.y * blockDim.y + threadIdx.y;  // channel [0, ci)
+    
+    if (h >= ho || c >= ci) return;
+    
+    int idx = h * ci + c;
+    
+    // 步骤1: 添加 bias
+    float x = (float)output[idx] + (float)bias[c];
+    
+    // 步骤2: 应用 SiLU activation
+    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+    float sigmoid_x = 1.0f / (1.0f + expf(-x));
+    float silu_x = x * sigmoid_x;
+    
+    output[idx] = (fp16_t)silu_x;
+}
+
 void casual_conv1d_block_run()
 {
     // ========== 配置参数 ==========
-    int batch = 1;  // 批次大小（已测试：batch=1,2 可以工作，bias 已支持）
+    int batch = 1;  // 批次大小（已测试：batch=1,2 可以工作，bias + SiLU 已支持）
     int hi = 2048;  // 输入序列长度
     int ci = 64;    // 输入通道数
     int hk = 4;     // 卷积核大小
@@ -733,24 +789,39 @@ void casual_conv1d_block_run()
         HIP_CALL(hipGetLastError());
         HIP_CALL(hipDeviceSynchronize());
         
-        // ========== 添加 bias ==========
+        // ========== 添加 bias (+ SiLU activation) ==========
+#if ENABLE_SILU_ACTIVATION
+        printf("在 GPU 上添加 bias 并应用 SiLU activation (batch=%d)...\n", batch);
+#else
         printf("在 GPU 上添加 bias (batch=%d)...\n", batch);
+#endif
         {
             dim3 bias_block_dim(16, 16);
             dim3 bias_grid_dim((ho + bias_block_dim.x - 1) / bias_block_dim.x,
                               (ci + bias_block_dim.y - 1) / bias_block_dim.y);
             
-            // 对每个 batch 添加 bias
+            // 对每个 batch 添加 bias (可选：应用 SiLU)
             for (int b = 0; b < batch; b++) {
+#if ENABLE_SILU_ACTIVATION
+                add_bias_silu_fused_kernel<<<bias_grid_dim, bias_block_dim>>>(
+                    reinterpret_cast<fp16_t*>(dev_c + b*ldc*m),  // 输出 [ho, ci] for batch b
+                    reinterpret_cast<fp16_t*>(dev_bias),          // bias [ci]
+                    ho, ci);
+#else
                 add_bias_kernel<<<bias_grid_dim, bias_block_dim>>>(
                     reinterpret_cast<fp16_t*>(dev_c + b*ldc*m),  // 输出 [ho, ci] for batch b
                     reinterpret_cast<fp16_t*>(dev_bias),          // bias [ci]
                     ho, ci);
+#endif
             }
             HIP_CALL(hipGetLastError());
             HIP_CALL(hipDeviceSynchronize());
         }
+#if ENABLE_SILU_ACTIVATION
+        printf("✓ bias + SiLU activation 完成\n");
+#else
         printf("✓ bias 添加完成\n");
+#endif
 
         // 将结果拷贝回 host
         HIP_CALL(hipMemcpy(fp16_c, dev_c, batch*ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
