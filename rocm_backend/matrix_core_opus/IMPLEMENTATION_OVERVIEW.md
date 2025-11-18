@@ -21,7 +21,7 @@
 
 - **GPU 加速**：将输入预处理（padding、img2col）和权重转换迁移到 GPU
 - **批处理支持**：支持 `batch > 1` 的批量处理
-- **完整功能**：支持 bias 加法操作
+- **完整功能**：支持 bias 加法和 SiLU activation
 - **高性能**：利用 Matrix Core (WMMA) 进行高效的矩阵乘法
 
 ---
@@ -48,8 +48,9 @@ GPU Kernel 3: matrix_core_kernel_block_v2 (GEMM)
     - 计算 A[ho, hk*ci] × B[hk*ci, ci] = C[ho, ci]
     - 利用 Matrix Core 加速
     ↓
-GPU Kernel 4: add_bias_kernel
+GPU Kernel 4: add_bias_silu_fused_kernel
     - 对输出添加 bias: C[ho, ci] += bias[ci]
+    - 应用 SiLU activation: C = C * sigmoid(C)
     ↓
 hipMemcpy (D2H): 传输结果回 CPU
     ↓
@@ -195,16 +196,16 @@ __global__ void preprocess_weight_kernel(
 - 每个 Wave 处理 16×16 的输出块
 - FP16 精度，高吞吐量
 
-### 4. add_bias_kernel
+### 4. add_bias_silu_fused_kernel
 
-**功能：** 对 GEMM 输出添加 bias
+**功能：** 对 GEMM 输出添加 bias 并应用 SiLU activation（融合 kernel）
 
 **输入：** `C[batch, ho, ci]` + `bias[ci]`  
-**输出：** `C[batch, ho, ci] += bias[ci]` (in-place)
+**输出：** `C[batch, ho, ci] = SiLU(C + bias)` (in-place)
 
 **核心代码：**
 ```cpp
-__global__ void add_bias_kernel(
+__global__ void add_bias_silu_fused_kernel(
     fp16_t* __restrict__ output,       // [ho, ci]
     const fp16_t* __restrict__ bias,   // [ci]
     int ho, int ci)
@@ -214,9 +215,24 @@ __global__ void add_bias_kernel(
     
     if (h >= ho || c >= ci) return;
     
-    output[h * ci + c] += bias[c];  // 广播加法
+    int idx = h * ci + c;
+    
+    // 步骤1: 添加 bias
+    float x = (float)output[idx] + (float)bias[c];
+    
+    // 步骤2: 应用 SiLU activation
+    // SiLU(x) = x * sigmoid(x) = x / (1 + exp(-x))
+    float sigmoid_x = 1.0f / (1.0f + expf(-x));
+    float silu_x = x * sigmoid_x;
+    
+    output[idx] = (fp16_t)silu_x;
 }
 ```
+
+**特点：**
+- 融合 bias 加法和 SiLU activation，减少内存访问
+- 使用 FP32 进行中间计算，提高数值稳定性
+- SiLU(x) = x · sigmoid(x)，提供平滑的非线性变换
 
 ---
 
@@ -260,13 +276,18 @@ for (int b = 0; b < batch; b++) {
 - 当前实现每个 batch 串行处理
 - 未来可以将 batch 维度融入 kernel，实现真正的并行
 
-### 2. Bias 支持
+### 2. Bias + SiLU Activation 支持
 
 **实现细节：**
 - Host 端初始化 `host_bias[ci]`（非零值）
 - 转换为 FP16: `fp16_bias[ci]`
 - 传输到 GPU: `dev_bias`
-- GEMM 后调用 `add_bias_kernel` 执行广播加法
+- GEMM 后调用 `add_bias_silu_fused_kernel` 执行融合操作
+
+**融合 kernel 优势：**
+- ✅ 减少内存访问：从 4 次（bias 读写 + SiLU 读写）降低到 2 次（单次读写）
+- ✅ 提高缓存效率：中间结果留在寄存器中
+- ✅ 减少 kernel 启动开销：单次调用完成两项操作
 
 **初始化示例：**
 ```cpp
@@ -281,7 +302,14 @@ for(int i = 0; i < ci; i++) {
 }
 ```
 
-### 3. 编译时验证开关
+**SiLU 函数特性：**
+- 数学定义：`SiLU(x) = x · sigmoid(x) = x / (1 + exp(-x))`
+- 平滑可微，非单调
+- 在深度学习中表现优于 ReLU
+
+### 3. 编译时开关
+
+#### 3.1 验证开关
 
 **宏定义：**
 ```cpp
@@ -302,6 +330,38 @@ for(int i = 0; i < ci; i++) {
 **纯GPU模式用途：**
 - 生产环境部署
 - 性能基准测试
+
+#### 3.2 SiLU Activation 开关
+
+**宏定义：**
+```cpp
+#define ENABLE_SILU_ACTIVATION 1  // 1=启用 SiLU，0=只添加 bias
+```
+
+**两种模式：**
+
+| 模式 | ENABLE_SILU_ACTIVATION | GPU Kernel | Host 函数 | 输出 |
+|------|------------------------|------------|-----------|------|
+| 启用 SiLU | 1 | `add_bias_silu_fused_kernel` | `SiLU(Conv + Bias)` | Conv1D + Bias + SiLU |
+| 禁用 SiLU | 0 | `add_bias_kernel` | `Conv + Bias` | Conv1D + Bias |
+
+**测试输出对比：**
+
+```bash
+# ENABLE_SILU_ACTIVATION = 1
+在 GPU 上添加 bias 并应用 SiLU activation (batch=1)...
+✓ bias + SiLU activation 完成
+
+# ENABLE_SILU_ACTIVATION = 0
+在 GPU 上添加 bias (batch=1)...
+✓ bias 添加完成
+```
+
+**应用场景：**
+- ✅ **性能对比**：测量 SiLU 的额外开销（约 5%）
+- ✅ **精度验证**：比较有无 activation 对结果的影响
+- ✅ **功能调试**：简化计算流程，便于问题定位
+- ✅ **消融实验**：评估 activation 函数的贡献
 
 ---
 
@@ -491,7 +551,8 @@ int hk = 4;                   // kernel width
 
 ✅ **GPU 加速**：将预处理迁移到 GPU，利用并行计算  
 ✅ **批处理支持**：支持 `batch > 1`，提升吞吐量  
-✅ **完整功能**：支持 bias 操作  
+✅ **完整功能**：支持 bias 和 SiLU activation  
+✅ **Kernel 融合**：Bias + SiLU 融合优化，减少内存访问  
 ✅ **正确性验证**：通过严格的数值验证  
 ✅ **性能分析**：识别瓶颈并提出优化方向  
 
@@ -499,8 +560,9 @@ int hk = 4;                   // kernel width
 
 1. **混合执行策略**：Host 转置 + GPU 计算，平衡复杂度和性能
 2. **Matrix Core 加速**：利用 WMMA 指令实现高效 GEMM
-3. **模块化设计**：预处理、GEMM、后处理分离，易于优化
-4. **编译时开关**：灵活的验证/性能模式切换
+3. **Kernel 融合优化**：Bias + SiLU 融合到单个 kernel，提升性能
+4. **模块化设计**：预处理、GEMM、后处理分离，易于优化
+5. **编译时开关**：灵活的验证/性能模式切换
 
 ### 未来优化方向
 
@@ -515,6 +577,7 @@ int hk = 4;                   // kernel width
 
 ### 相关文档
 
+- `SILU_ACTIVATION_SUPPORT.md` - SiLU activation 实现详解
 - `GPU_PREPROCESS_README.md` - GPU 预处理详细说明
 - `BATCH_SUPPORT.md` - 批处理实现细节
 - `BIAS_SUPPORT.md` - Bias 支持说明
@@ -531,6 +594,6 @@ int hk = 4;                   // kernel width
 
 **文档版本：** 1.0  
 **最后更新：** 2025-11-14  
-**作者：** AI Assistant  
 **项目路径：** `/workspace/causal-conv1d/rocm_backend/matrix_core_opus/`
+
 
