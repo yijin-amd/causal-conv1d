@@ -1,6 +1,5 @@
-#include <c10/util/BFloat16.h>
-#include <c10/util/Half.h>
-
+// Note: This kernel uses float only, no need for PyTorch c10 headers
+// If you need half/bfloat16 support, add PyTorch include path to compilation
 
 // SiLU activation: x * sigmoid(x)
 __device__ __forceinline__ float silu(float x) {
