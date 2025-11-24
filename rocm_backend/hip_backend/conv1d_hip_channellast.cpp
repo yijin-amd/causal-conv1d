@@ -164,6 +164,7 @@ bool run_test(const char* name, int batch, int dim, int seqlen, int width,
     auto gpu_start = std::chrono::high_resolution_clock::now();
     
     causal_conv1d_channellast_fwd_launch<128, 4>(params, stream);
+    HIP_CHECK(hipGetLastError());  // Check for kernel launch errors
     
     HIP_CHECK(hipStreamSynchronize(stream));
     auto gpu_end = std::chrono::high_resolution_clock::now();

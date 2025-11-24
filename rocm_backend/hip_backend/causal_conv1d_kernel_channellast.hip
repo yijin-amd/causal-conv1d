@@ -9,7 +9,6 @@
 #include <hip/hip_runtime.h>
 
 // Helper for constexpr min
-template<int kChunkSizeL>
 constexpr int constexpr_min(int a, int b) {
     return (a < b) ? a : b;
 }
@@ -191,7 +190,7 @@ void causal_conv1d_channellast_fwd_kernel(ConvParamsChannelLast params) {
 
     // ==================== Compute convolution ====================
     
-    constexpr int kLPerThread = constexpr_min<kChunkSizeL>(kChunkSizeL * kChunkSizeC / kNThreads, kChunkSizeL);
+    constexpr int kLPerThread = constexpr_min(kChunkSizeL * kChunkSizeC / kNThreads, kChunkSizeL);
     static_assert(kLPerThread * kNThreads == kChunkSizeL * kChunkSizeC);
     constexpr int kNThreadsPerRow = kChunkSizeL / kLPerThread;
     static_assert(kNThreadsPerRow * kLPerThread == kChunkSizeL);
