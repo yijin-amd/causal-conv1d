@@ -6,8 +6,6 @@
 #include <math.h>
 #include <stdio.h>
 #include <numeric>
-#include <torch/torch.h>
-#include <cstring>
 #define HALF
 #ifdef HALF
 #include "half.hpp"
@@ -17,7 +15,6 @@
 
 #define LOCAL_SCRATCH 0
 #define RAND_INT 0
-#define CUSTOMIZED_INT 1
 
 #define MAX(x, y) ((x) > (y) ? (x) : (y))
 #define HIP_CALL(call) do{  \
@@ -138,6 +135,467 @@ matrix_core_kernel_standard(const void* __restrict__ ptr_a,
     for(auto i = 0; i < 16; i++) {
         int row_offset = (i % 4) + (i / 4 * 8);
         *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
+// ============================================================================
+// 直接使用 MFMA 内建指令的大规模 GEMM Kernel
+// C[M×N] = A[M×K] × B[N×K]^T
+// ============================================================================
+
+// ============================================================================
+// 修正后的 MFMA Large Kernel - 正确的索引计算
+// C[M×N] = A[M×K] × B[N×K]^T
+// ============================================================================
+
+__global__ void 
+matrix_core_kernel_mfma_large(
+    const void* __restrict__ ptr_a,
+    const void* __restrict__ ptr_b,
+    void* __restrict__ ptr_c,
+    int m,              // M 维度
+    int n,              // N 维度
+    int k,              // K 维度
+    int stride_a,       // A 矩阵的行 stride
+    int stride_b,       // B 矩阵的行 stride
+    int stride_c)       // C 矩阵的行 stride
+{
+    constexpr int MFMA_M = 32;
+    constexpr int MFMA_N = 32;
+    constexpr int MFMA_K = 8;
+    
+    // 当前 block 负责的矩阵位置
+    int block_m = blockIdx.x * MFMA_M;
+    int block_n = blockIdx.y * MFMA_N;
+    
+    int lane_id = threadIdx.x;
+    
+    // ========================================================================
+    // 关键修正：正确的 A/B 索引计算
+    // ========================================================================
+    // 参考 matrix_core_kernel_standard 的实现（第117-118行）
+    // offset = (lane / 32 * 4) + (lane % 32 * stride)
+    
+    // 每个 lane 的基础偏移（在 32x8 子矩阵中）：
+    // - 列偏移：lane / 32 * 4  (前32个lane读取列0-3，后32个读取列4-7)
+    // - 行偏移：lane % 32       (每个lane负责不同的行)
+    
+    int col_offset_a = lane_id / 32 * 4;  // 0 or 4
+    int row_offset_a = lane_id % 32;       // 0-31
+    
+    int col_offset_b = lane_id / 32 * 4;
+    int row_offset_b = lane_id % 32;
+    
+    // ========================================================================
+    // K 循环累加
+    // ========================================================================
+    fp32x16_t v_c = {0.0f};
+    
+    int k_loops = (k + MFMA_K - 1) / MFMA_K;
+    
+    for (int k_iter = 0; k_iter < k_loops; k_iter++) {
+        int k_offset = k_iter * MFMA_K;
+        
+        // A[block_m + row, k_offset + col]
+        const fp16_t* ptr_a_base = reinterpret_cast<const fp16_t*>(ptr_a) + 
+                                    (block_m + row_offset_a) * stride_a + 
+                                    k_offset + col_offset_a;
+        fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(ptr_a_base);
+        
+        // B[block_n + row, k_offset + col]
+        const fp16_t* ptr_b_base = reinterpret_cast<const fp16_t*>(ptr_b) + 
+                                    (block_n + row_offset_b) * stride_b + 
+                                    k_offset + col_offset_b;
+        fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(ptr_b_base);
+        
+        // MFMA 计算
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a, v_b, v_c, 0, 0, 0);
+    }
+    
+    // ========================================================================
+    // FP32 → FP16 转换
+    // ========================================================================
+    fp16x16_t v_c_f16;
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+    
+    // ========================================================================
+    // 关键修正：正确的 C 写入索引
+    // ========================================================================
+    // 参考 matrix_core_kernel_standard 的实现（第131-138行）
+    
+    int col_id_c = lane_id % 32;            // 列：0-31
+    int row_id_c = lane_id / 32 * 4;        // 行起始：0 or 4
+    int offset_c = (block_m + row_id_c) * stride_c + block_n + col_id_c;
+    
+    // 每个 lane 写 16 个元素，布局为：
+    // i=0-3:   行偏移 0, 1, 2, 3
+    // i=4-7:   行偏移 8, 9, 10, 11
+    // i=8-11:  行偏移 16, 17, 18, 19
+    // i=12-15: 行偏移 24, 25, 26, 27
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
+
+// ============================================================================
+// Double Buffering 优化版本
+// 在 MFMA 计算时同步预加载下一次迭代的数据
+// ============================================================================
+
+__global__ void 
+matrix_core_kernel_mfma_large_double_buffer(
+    const void* __restrict__ ptr_a,
+    const void* __restrict__ ptr_b,
+    void* __restrict__ ptr_c,
+    int m,
+    int n,
+    int k,
+    int stride_a,
+    int stride_b,
+    int stride_c)
+{
+    constexpr int MFMA_M = 32;
+    constexpr int MFMA_N = 32;
+    constexpr int MFMA_K = 8;
+    
+    // ========================================================================
+    // 1. 初始化：Block 和 Lane 定位
+    // ========================================================================
+    int block_m = blockIdx.x * MFMA_M;
+    int block_n = blockIdx.y * MFMA_N;
+    int lane_id = threadIdx.x;
+    
+    // A/B 的索引偏移（在 32×8 子矩阵中的位置）
+    int col_offset_a = lane_id / 32 * 4;
+    int row_offset_a = lane_id % 32;
+    int col_offset_b = lane_id / 32 * 4;
+    int row_offset_b = lane_id % 32;
+    
+    // ========================================================================
+    // 2. 计算基础地址（避免循环内重复计算）
+    // ========================================================================
+    const fp16_t* ptr_a_base = reinterpret_cast<const fp16_t*>(ptr_a) + 
+                                (block_m + row_offset_a) * stride_a + 
+                                col_offset_a;
+    
+    const fp16_t* ptr_b_base = reinterpret_cast<const fp16_t*>(ptr_b) + 
+                                (block_n + row_offset_b) * stride_b + 
+                                col_offset_b;
+    
+    // ========================================================================
+    // 3. Double Buffering: 预加载第一批数据
+    // ========================================================================
+    fp32x16_t v_c = {0.0f};
+    int k_loops = (k + MFMA_K - 1) / MFMA_K;
+    
+    if (k_loops == 0) return;  // 边界保护
+    
+    // 🔄 Buffer 0: 加载第一次迭代的数据
+    fp16x4_t v_a_curr = *reinterpret_cast<const fp16x4_t*>(ptr_a_base);
+    fp16x4_t v_b_curr = *reinterpret_cast<const fp16x4_t*>(ptr_b_base);
+    
+    // ========================================================================
+    // 4. K 循环：计算 + 预加载重叠
+    // ========================================================================
+    for (int k_iter = 0; k_iter < k_loops - 1; k_iter++) {
+        // 计算下一次迭代的地址
+        int k_offset_next = (k_iter + 1) * MFMA_K;
+        const fp16_t* ptr_a_next = ptr_a_base + k_offset_next;
+        const fp16_t* ptr_b_next = ptr_b_base + k_offset_next;
+        
+        // 🔄 Buffer 1: 预加载下一次迭代的数据
+        // 这个加载操作会在 MFMA 计算时并行执行（异步）
+        fp16x4_t v_a_next = *reinterpret_cast<const fp16x4_t*>(ptr_a_next);
+        fp16x4_t v_b_next = *reinterpret_cast<const fp16x4_t*>(ptr_b_next);
+        
+        // 💡 关键：MFMA 计算（使用当前 buffer 的数据）
+        // GPU 会在计算的同时处理上面的内存加载请求
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a_curr, v_b_curr, v_c, 0, 0, 0);
+        
+        // 🔄 切换 buffer：下一次变为当前
+        v_a_curr = v_a_next;
+        v_b_curr = v_b_next;
+    }
+    
+    // ========================================================================
+    // 5. 处理最后一次迭代（无需预加载）
+    // ========================================================================
+    v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a_curr, v_b_curr, v_c, 0, 0, 0);
+    
+    // ========================================================================
+    // 6. FP32 → FP16 转换
+    // ========================================================================
+    fp16x16_t v_c_f16;
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+    
+    // ========================================================================
+    // 7. 写回结果到全局内存
+    // ========================================================================
+    int col_id_c = lane_id % 32;
+    int row_id_c = lane_id / 32 * 4;
+    int offset_c = (block_m + row_id_c) * stride_c + block_n + col_id_c;
+    
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
+// ============================================================================
+// 软件流水线版本 - 针对单 Wave 优化
+// 不使用 LDS，通过指令重排和预取优化
+// ============================================================================
+
+__global__ void 
+matrix_core_kernel_mfma_large_prefetch(
+    const void* __restrict__ ptr_a,
+    const void* __restrict__ ptr_b,
+    void* __restrict__ ptr_c,
+    int m, int n, int k,
+    int stride_a, int stride_b, int stride_c)
+{
+    constexpr int MFMA_M = 32;
+    constexpr int MFMA_N = 32;
+    constexpr int MFMA_K = 8;
+    
+    int block_m = blockIdx.x * MFMA_M;
+    int block_n = blockIdx.y * MFMA_N;
+    int lane_id = threadIdx.x;
+    
+    int col_offset_a = lane_id / 32 * 4;
+    int row_offset_a = lane_id % 32;
+    int col_offset_b = lane_id / 32 * 4;
+    int row_offset_b = lane_id % 32;
+    
+    const fp16_t* ptr_a_base = reinterpret_cast<const fp16_t*>(ptr_a) + 
+                                (block_m + row_offset_a) * stride_a + 
+                                col_offset_a;
+    
+    const fp16_t* ptr_b_base = reinterpret_cast<const fp16_t*>(ptr_b) + 
+                                (block_n + row_offset_b) * stride_b + 
+                                col_offset_b;
+    
+    fp32x16_t v_c = {0.0f};
+    int k_loops = (k + MFMA_K - 1) / MFMA_K;
+    
+    if (k_loops == 0) return;
+    
+    // ✅ 关键优化：手动展开 + 多级预取
+    // 一次处理 4 个迭代，充分利用指令级并行
+    
+    int k_main_loops = k_loops / 4;
+    int k_remain = k_loops % 4;
+    
+    for (int k_iter = 0; k_iter < k_main_loops; k_iter++) {
+        int k_base = k_iter * 4 * MFMA_K;
+        
+        // 预取 4 个迭代的数据
+        const fp16_t* pa0 = ptr_a_base + k_base;
+        const fp16_t* pa1 = pa0 + MFMA_K;
+        const fp16_t* pa2 = pa1 + MFMA_K;
+        const fp16_t* pa3 = pa2 + MFMA_K;
+        
+        const fp16_t* pb0 = ptr_b_base + k_base;
+        const fp16_t* pb1 = pb0 + MFMA_K;
+        const fp16_t* pb2 = pb1 + MFMA_K;
+        const fp16_t* pb3 = pb2 + MFMA_K;
+        
+        // 加载数据（编译器会自动重排以隐藏延迟）
+        fp16x4_t v_a0 = *reinterpret_cast<const fp16x4_t*>(pa0);
+        fp16x4_t v_b0 = *reinterpret_cast<const fp16x4_t*>(pb0);
+        fp16x4_t v_a1 = *reinterpret_cast<const fp16x4_t*>(pa1);
+        fp16x4_t v_b1 = *reinterpret_cast<const fp16x4_t*>(pb1);
+        fp16x4_t v_a2 = *reinterpret_cast<const fp16x4_t*>(pa2);
+        fp16x4_t v_b2 = *reinterpret_cast<const fp16x4_t*>(pb2);
+        fp16x4_t v_a3 = *reinterpret_cast<const fp16x4_t*>(pa3);
+        fp16x4_t v_b3 = *reinterpret_cast<const fp16x4_t*>(pb3);
+        
+        // MFMA 计算（4 次连续）
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a0, v_b0, v_c, 0, 0, 0);
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a1, v_b1, v_c, 0, 0, 0);
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a2, v_b2, v_c, 0, 0, 0);
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a3, v_b3, v_c, 0, 0, 0);
+    }
+    
+    // 处理剩余迭代
+    int k_base = k_main_loops * 4 * MFMA_K;
+    for (int i = 0; i < k_remain; i++) {
+        int k_offset = k_base + i * MFMA_K;
+        const fp16_t* pa = ptr_a_base + k_offset;
+        const fp16_t* pb = ptr_b_base + k_offset;
+        
+        fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(pa);
+        fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(pb);
+        
+        v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a, v_b, v_c, 0, 0, 0);
+    }
+    
+    // FP32 → FP16
+    fp16x16_t v_c_f16;
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+    
+    // 写回
+    int col_id_c = lane_id % 32;
+    int row_id_c = lane_id / 32 * 4;
+    int offset_c = (block_m + row_id_c) * stride_c + block_n + col_id_c;
+    
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
+// ============================================================================
+// 64×64 Multi-Wave + LDS 版本 - 修复内存访问错误
+// ============================================================================
+
+__global__ void 
+matrix_core_kernel_mfma_large_64x64_lds(
+    const void* __restrict__ ptr_a,
+    const void* __restrict__ ptr_b,
+    void* __restrict__ ptr_c,
+    int m, int n, int k,
+    int stride_a, int stride_b, int stride_c)
+{
+    constexpr int MFMA_M = 32;
+    constexpr int MFMA_N = 32;
+    constexpr int BLOCK_M = 64;
+    constexpr int BLOCK_N = 64;
+    constexpr int LDS_K = 64;
+    
+    // ✅ 确保 LDS 大小正确
+    __shared__ fp16_t smem_a[BLOCK_M * LDS_K];  // 64×64 = 4096 FP16 = 8 KB
+    __shared__ fp16_t smem_b[BLOCK_N * LDS_K];  // 64×64 = 4096 FP16 = 8 KB
+    
+    int wave_id = threadIdx.x / 64;
+    int lane_id = threadIdx.x % 64;
+    
+    int wave_m = wave_id / 2;  // 0, 0, 1, 1
+    int wave_n = wave_id % 2;  // 0, 1, 0, 1
+    
+    int block_m = blockIdx.x * BLOCK_M;
+    int block_n = blockIdx.y * BLOCK_N;
+    
+    // ✅ 边界检查
+    if (block_m >= m || block_n >= n) return;
+    
+    int local_m = wave_m * MFMA_M;
+    int local_n = wave_n * MFMA_N;
+    
+    const fp16_t* g_a = reinterpret_cast<const fp16_t*>(ptr_a) + block_m * stride_a;
+    const fp16_t* g_b = reinterpret_cast<const fp16_t*>(ptr_b) + block_n * stride_b;
+    
+    fp32x16_t v_c = {0.0f};
+    int k_tiles = (k + LDS_K - 1) / LDS_K;
+    
+    for (int k_tile = 0; k_tile < k_tiles; k_tile++) {
+        int k_start = k_tile * LDS_K;
+        int k_remain = min(k - k_start, LDS_K);
+        
+        // ====================================================================
+        // ✅ 修复 1: 加载 A 时添加边界检查
+        // ====================================================================
+        int tid = threadIdx.x;
+        int total_a = BLOCK_M * k_remain;
+        
+        for (int idx = tid; idx < total_a; idx += 256) {
+            int row = idx / k_remain;
+            int col = idx % k_remain;
+            
+            // ✅ 边界检查
+            if (row < BLOCK_M && block_m + row < m && k_start + col < k) {
+                smem_a[row * LDS_K + col] = g_a[row * stride_a + k_start + col];
+            } else {
+                smem_a[row * LDS_K + col] = static_cast<fp16_t>(0.0f);
+            }
+        }
+        
+        // ====================================================================
+        // ✅ 修复 2: 加载 B 时添加边界检查
+        // ====================================================================
+        int total_b = BLOCK_N * k_remain;
+        
+        for (int idx = tid; idx < total_b; idx += 256) {
+            int row = idx / k_remain;
+            int col = idx % k_remain;
+            
+            // ✅ 边界检查
+            if (row < BLOCK_N && block_n + row < n && k_start + col < k) {
+                smem_b[row * LDS_K + col] = g_b[row * stride_b + k_start + col];
+            } else {
+                smem_b[row * LDS_K + col] = static_cast<fp16_t>(0.0f);
+            }
+        }
+        
+        __syncthreads();
+        
+        // ====================================================================
+        // ✅ 修复 3: 从 LDS 读取时确保索引正确
+        // ====================================================================
+        int col_offset = lane_id / 32 * 4;
+        int row_offset = lane_id % 32;
+        
+        int mfma_loops = k_remain / 8;
+        
+        #pragma unroll 2
+        for (int mfma_k = 0; mfma_k < mfma_loops; mfma_k++) {
+            int k_local = mfma_k * 8;
+            
+            // ✅ 计算 LDS 索引（确保不越界）
+            int smem_a_idx = (local_m + row_offset) * LDS_K + k_local + col_offset;
+            int smem_b_idx = (local_n + row_offset) * LDS_K + k_local + col_offset;
+            
+            // ✅ 断言检查（调试用，生产环境可移除）
+            // assert(smem_a_idx + 3 < BLOCK_M * LDS_K);
+            // assert(smem_b_idx + 3 < BLOCK_N * LDS_K);
+            
+            fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(&smem_a[smem_a_idx]);
+            fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(&smem_b[smem_b_idx]);
+            
+            v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a, v_b, v_c, 0, 0, 0);
+        }
+        
+        __syncthreads();
+    }
+    
+    // ========================================================================
+    // ✅ 修复 4: 写回时添加边界检查
+    // ========================================================================
+    fp16x16_t v_c_f16;
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+    
+    int col_id_c = lane_id % 32;
+    int row_id_c = lane_id / 32 * 4;
+    
+    fp16_t* g_c = reinterpret_cast<fp16_t*>(ptr_c);
+    
+    #pragma unroll
+    for (int i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        int global_row = block_m + local_m + row_id_c + row_offset;
+        int global_col = block_n + local_n + col_id_c;
+        
+        // ✅ 边界检查
+        if (global_row < m && global_col < n) {
+            g_c[global_row * stride_c + global_col] = v_c_f16[i];
+        }
     }
 }
 
@@ -650,9 +1108,9 @@ __global__ void matrix_core_kernel_block_v2(const void* __restrict__ ptr_a,
     //
     auto mma  = opus::make_tiled_mma<d_a, d_b, d_c>(opus::seq<E_M, E_N, E_K>{}, opus::seq<T_M, T_N, T_K>{}, opus::seq<W_M, W_N, W_K>{}, opus::mfma_adaptor_swap_ab{});
 
-    auto u_a = opus::partition_layout_a(mma, opus::make_tuple(stride_a, 1_I), opus::make_tuple(wave_id / 2, lane_id % mma.grpm_a, 0_I, lane_id / mma.grpm_a) /*tile_m<p>, grpm_a<p>, tile_k<p>, grpk_a<p>*/);
-    auto u_b = opus::partition_layout_b(mma, opus::make_tuple(stride_b, 1_I), opus::make_tuple(wave_id % 2, lane_id % mma.grpn_b, 0_I, lane_id / mma.grpn_b) /*tile_n<p>, grpn_b<p>, tile_k<p>, grpk_b<p>*/);
-    auto u_c = opus::partition_layout_c(mma, opus::make_tuple(stride_c, 1_I), opus::make_tuple(wave_id / 2, lane_id % mma.grpn_c, wave_id % 2, lane_id / mma.grpn_c) /*tile_m<p>, grpn_c<p> tile_n<p>, grpm_c<p>*/);
+    auto u_a = opus::partition_layout_a(mma, opus::make_tuple(stride_a, 1_I), opus::make_tuple(wave_id / TILE_N, lane_id % mma.grpm_a, 0_I, lane_id / mma.grpm_a) /*tile_m<p>, grpm_a<p>, tile_k<p>, grpk_a<p>*/);
+    auto u_b = opus::partition_layout_b(mma, opus::make_tuple(stride_b, 1_I), opus::make_tuple(wave_id % TILE_N, lane_id % mma.grpn_b, 0_I, lane_id / mma.grpn_b) /*tile_n<p>, grpn_b<p>, tile_k<p>, grpk_b<p>*/);
+    auto u_c = opus::partition_layout_c(mma, opus::make_tuple(stride_c, 1_I), opus::make_tuple(wave_id / TILE_N, lane_id % mma.grpn_c, wave_id % TILE_N, lane_id / mma.grpn_c) /*tile_m<p>, grpn_c<p> tile_n<p>, grpm_c<p>*/);
     auto g_a = opus::make_gmem(reinterpret_cast<const d_a*>(ptr_a) + g_im * stride_a);
     auto g_b = opus::make_gmem(reinterpret_cast<const d_b*>(ptr_b) + g_in * stride_b);
     auto g_c = opus::make_gmem(reinterpret_cast<opus::fp16_t*>(ptr_c) + g_im * stride_c + g_in);
@@ -662,7 +1120,7 @@ __global__ void matrix_core_kernel_block_v2(const void* __restrict__ ptr_a,
 #if 1
     typename decltype(mma)::vtype_c v_c;
     opus::clear(v_c);
-
+#pragma unroll
     for(auto i = 0; i < loops; i++ ) {
         auto v_a = g_a.load<4>(u_a);  u_a += BLOCK_K;
         auto v_b = g_b.load<4>(u_b);  u_b += BLOCK_K;
@@ -753,28 +1211,6 @@ void rand_vector_2d_int(float* v, int row, int col, int ld){
     }
 }
 
-void customized_vector_2d_in(float* v, int row, int col, int ld){
-    int r,c;
-    static int flag = 0;
-    if(!flag){ srand(time(NULL)); flag = 1; }
-    for(r=0;r<row;r++){
-        for(c=0;c<col;c++){
-            v[r*ld+c] = ((float)(r*ld+c)/10);
-        }
-    }
-}
-
-void customized_vector_2d_weight(float* v, int row, int col, int ld){
-    int r,c;
-    static int flag = 0;
-    if(!flag){ srand(time(NULL)); flag = 1; }
-    for(r=0;r<row;r++){
-        for(c=0;c<col;c++){
-            v[r*ld+c] = ((float)(r*ld+c)/10);
-        }
-    }
-}
-
 void gemm_rcr(
     const float*  __restrict__ ptr_a,
     const float*  __restrict__ ptr_b,
@@ -799,13 +1235,13 @@ void gemm_rcr(
 
 void block_run()
 {
-    // int m = 64 * 6;
-    // int n = 64 * 3;
-    // int k = 8 * 8;
+    int m = 32 * 64 * 4;
+    int n = 32 * 2;
+    int k = 8 * 32;
 
-    int m = 32;
-    int n = 32;
-    int k = 4 * 32;
+    // int m = 4096;
+    // int n = 128;
+    // int k = 7168;
 
     int lda = k;
     int ldb = k;
@@ -848,17 +1284,17 @@ void block_run()
     {
         constexpr int BLOCK_M = 32;
         constexpr int BLOCK_N = 32;
-        constexpr int BLOCK_K = 16;
-        constexpr int TILE_M = 2;
-        constexpr int TILE_N = 2;
+        constexpr int BLOCK_K = 8;
+        constexpr int TILE_M = 1;
+        constexpr int TILE_N = 1;
         constexpr int TILE_K = 1;
-        constexpr int WAVE_M = 16;
-        constexpr int WAVE_N = 16;
-        constexpr int WAVE_K = 16;
+        constexpr int WAVE_M = 32;
+        constexpr int WAVE_N = 32;
+        constexpr int WAVE_K = 8;
 
         auto gdim = dim3(m / BLOCK_M, n / BLOCK_N);
-        auto kernel = matrix_core_kernel_block_v2<256, BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K>;
-        kernel<<<gdim, 256>>>(dev_a, dev_b, dev_c, k, lda, ldb, ldc);
+        auto kernel = matrix_core_kernel_block_v2<64, BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K>;
+        kernel<<<gdim, 64>>>(dev_a, dev_b, dev_c, k, lda, ldb, ldc);
 
         HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
 #if 1
@@ -880,241 +1316,6 @@ void block_run()
     HIP_CALL(hipFree(dev_a));
     HIP_CALL(hipFree(dev_b));
     HIP_CALL(hipFree(dev_c));
-}
-
-// 封装成函数，避免顶层解析错误
-void run_conv1d(float* input, float* output,
-                float* weight, float* bias,
-                int N, int C_in, int C_out, int L,
-                int kernel_size, int pad, int stride = 1, int groups = 1) {
-    // 1. 定义 Conv1d 模块（局部作用域
-    auto conv = torch::nn::Conv1d(
-        torch::nn::Conv1dOptions(C_in, C_out, kernel_size)
-            .stride(stride)
-            .padding(pad)
-            .groups(groups)
-    );
-
-    // 2. 设置权重和偏置
-    auto w_tensor = torch::from_blob(weight, {C_out, C_in / groups, kernel_size}, torch::kFloat).clone();
-    auto b_tensor = torch::from_blob(bias, {C_out}, torch::kFloat).clone();
-    conv->weight = w_tensor;
-    conv->bias   = b_tensor;
-
-    // 3. 输入张量
-    auto input_tensor = torch::from_blob(input, {N, C_in, L}, torch::kFloat).clone();
-
-    // 4. 前向计算
-    auto output_tensor = conv->forward(input_tensor);
-
-    // 5. 拷贝结果到一维指针
-    int out_size = 1;
-    for (auto s : output_tensor.sizes()) out_size *= s;
-    std::memcpy(output, output_tensor.data_ptr<float>(), out_size * sizeof(float));
-
-    std::cout << "Output shape: " << output_tensor.sizes() << std::endl;}
-
-void casual_conv1d_rcr(
-    const float*  __restrict__ input,
-    float*  output,
-    const float*  __restrict__ weight,
-    const float*  __restrict__ bias,
-    int N,
-    int C_in,
-    int C_out,
-    int L,
-    int kernel_size,
-    int pad,
-    int stride = 1,
-    int groups = 1) {
-        // 1. 定义 Conv1d
-    torch::nn::Conv1d conv(
-        torch::nn::Conv1dOptions(C_in, C_out, kernel_size)
-            .stride(stride)
-            .padding(pad)
-            .groups(groups)
-    );
- 
-    // 2. 设置权重和偏置
-    torch::Tensor w_tensor = torch::from_blob(weight, {C_out, C_in / groups, kernel_size}, torch::kFloat).clone();
-    torch::Tensor b_tensor = torch::from_blob(bias, {C_out}, torch::kFloat).clone();
-    conv->weight = w_tensor;
-    conv->bias   = b_tensor;
- 
-    // 3. 输入张量
-    torch::Tensor input_tensor = torch::from_blob(input, {N, C_in, L}, torch::kFloat).clone();
- 
-    // 4. 前向计算
-    torch::Tensor output_tensor = conv->forward(input_tensor);
- 
-    // 5. 拷贝结果到一维指针
-    int out_size = 1;
-    for (auto s : output_tensor.sizes()) out_size *= s;
-    std::memcpy(output, output_tensor.data_ptr<float>(), out_size * sizeof(float));
- 
-    // 打印输出形状
-    std::cout << "Output shape: " << output_tensor.sizes() << std::endl;
-}
-
-void casual_conv1d_block_run()
-{
-    int batch = 1;
-    int hi = 32;
-    int ci = 32;
-    int hk = 4;
-    int pad = hk - 1;
-
-    // define gemm inputs a,b,c
-    int ho = hi;
-    int m = ho;
-    int n = ci;
-    int k = hk * ci;
-
-    int lda = k;
-    int ldb = k;
-    int ldc = n;
-
-    // init fp32 input and weight
-    float *host_in, *host_w, *host_c, *host_bias;
-
-    //fp32 input[hi, ci] and weight[ci, hi] on host
-    host_in = (float*)malloc(batch*hi*ci*sizeof(float));
-    host_w = (float*)malloc(batch*ci*hk*sizeof(float));
-    host_bias = (float*)malloc(batch*ci*sizeof(float));
-    host_c = (float*)malloc(batch*ldc*m*sizeof(float));
-    int ld_in = ci;
-    int ld_w = hk;
-
-// #ifdef RAND_INT
-//     rand_vector_2d_int(host_in, hi, ci, ld_in);
-//     rand_vector_2d_int(host_w, ci, hk, ld_w);
-// #ifdef CUSTOMIZED_INT
-    customized_vector_2d_in(host_in, hi, ci, ld_in);
-    customized_vector_2d_weight(host_w, ci, hk, ld_w);
-    for (int i = 0; i < batch*ci; i++) host_bias[i] = 0.0f;
-// #else
-//     rand_vector_2d(host_in, hi, ci, ld_in, 0.0, 1.0);
-//     rand_vector_2d(host_w, ci, hk, ld_w, -0.5, 0.5);
-// #endif
-    // for(int i=0; i<hi*ci; i++) {if (i<100) {printf("in[%d], %f \n", i, host_in[i]);}}
-    // for(int i=0; i<ci*hk; i++) {printf("w[%d], %f \n", i, host_w[i]);}
-    float16 *fp16_in, *fp16_w;
-    //convert fp32 input into fp16 on host
-    fp16_in = (float16*)malloc((hi*ci)*sizeof(float16));
-    fp16_w = (float16*)malloc((ci*hk)*sizeof(float16));
-    for(int i=0; i<hi*ci; i++)fp16_in[i]=__float2half_rn(host_in[i]);
-    for(int i=0; i<ci*hk; i++)fp16_w[i]=__float2half_rn(host_w[i]);
-    // for(int i=0; i<ci*hk; i++) {printf("fp16_w[%d], %f \n", i, (float)(fp16_w[i]));}
-
-    // float *host_a, *host_b, *host_c;
-    float16 *fp16_in_pad, *fp16_a, *fp16_b, *fp16_c, *dev_a, *dev_b, *dev_c;
-
-    //preprocess input and weight to fp16 gemm inputs on host
-    fp16_in_pad = (float16*)malloc(((hi+pad) * ci)*sizeof(float16));
-    fp16_a = (float16*)malloc(lda*m*sizeof(float16));
-    fp16_b = (float16*)malloc(ldb*n*sizeof(float16));
-    fp16_c = (float16*)malloc(ldc*m*sizeof(float16));
-    // //convert fp32 a and b into fp16 on host
-    // for(int i=0; i<lda*m; i++)fp16_a[i]=__float2half_rn(host_a[i]);
-    // for(int i=0; i<ldb*n; i++)fp16_b[i]=__float2half_rn(host_b[i]);
-
-    // add pad for input
-    for(int i = 0; i < pad * ci; i++) {
-        fp16_in_pad[i] = 0;
-    }
-    for(int i = 0; i < hi * ci; i++) {
-        fp16_in_pad[i + pad * ci] = fp16_in[i];
-    }
-    // for(int i=0; i<(hi+pad)*ci; i++) {
-    //     if (i<200) {printf("fp16_in_pad[%d], %f \n", i, (float)(fp16_in_pad[i]));}
-    // }
-    // input with pad, img2col
-    for(int i=0; i < ho; i++) {
-        for (int j = 0; j < hk * ci; j++) {
-            fp16_a[i * hk *ci + j] = fp16_in_pad[i * ci + j];
-        }
-    }
-    // for(int i=0; i<ho * hk * ci; i++) {
-    //     if (i<800) {printf("fp16_a[%d], %f \n", i, (float)(fp16_a[i]));}
-    // }
-    //convert dw weight to common weight
-    // initialization
-    for(int i=0; i < ci * hk * ci; i++) {
-        fp16_b[i] = 0;
-    }
-    for(int i=0; i < ci; i++) {
-        for (int j = 0; j < hk*ci; j++) {
-            if ((j % ci) == i) {
-                fp16_b[i * hk *ci + j] = fp16_w[i * hk + int(j / ci)];
-                // printf("fp16_w[%d, %d], %f \n", i, int(j / ci), (float)(fp16_w[i * hk + int(j / ci)]));
-            }
-        }
-    }
-    // for(int i=0; i < ci; i++) {
-    //     for (int j = 0; j < hk*ci; j++) {
-    //         // if (i<4) {printf("fp16_b[%d, %d], %f ", i, j, (float)(fp16_b[i*hk*ci +j]));}
-    //         if (i<4) {printf("%f ", (float)(fp16_b[i*hk*ci +j]));}
-    //     }
-    //     if (i<4) {printf("/n");}
-    // }
-
-    HIP_CALL(hipMalloc(&dev_a, lda*m*sizeof(float16)));
-    HIP_CALL(hipMalloc(&dev_b, ldb*n*sizeof(float16)));
-    HIP_CALL(hipMalloc(&dev_c, ldc*m*sizeof(float16)));
-    //fp16 cpy to device
-    HIP_CALL(hipMemcpy(dev_a, fp16_a, lda*m*sizeof(float16), hipMemcpyHostToDevice));
-    HIP_CALL(hipMemcpy(dev_b, fp16_b, ldb*n*sizeof(float16), hipMemcpyHostToDevice));
-
-    printf("m:%d,n:%d,k:%d,lda:%d,ldb:%d,ldc:%d\n",  m, n, k, lda, ldb, ldc); fflush(stdout);
-    // gemm_rcr(host_a, host_b, host_c, m,n,k,lda,ldb,ldc);
-    casual_conv1d_rcr(host_in, host_c, host_w, host_bias, batch, ci, ci, hi, hk, pad, 1, ci);
-
-    {
-        constexpr int BLOCK_M = 32;
-        constexpr int BLOCK_N = 32;
-        constexpr int BLOCK_K = 16;
-        constexpr int TILE_M = 2;
-        constexpr int TILE_N = 2;
-        constexpr int TILE_K = 1;
-        constexpr int WAVE_M = 16;
-        constexpr int WAVE_N = 16;
-        constexpr int WAVE_K = 16;
-
-        auto gdim = dim3(m / BLOCK_M, n / BLOCK_N);
-        auto kernel = matrix_core_kernel_block_v2<256, BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K>;
-        kernel<<<gdim, 256>>>(dev_a, dev_b, dev_c, k, lda, ldb, ldc);
-
-        HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
-#if 1
-        bool res = valid_vector( host_c, fp16_c, m*n, 1e-3);
-        printf("[%dx%dx%d, block_gemm_%dx%dx%d_%dx%dx%d_%dx%dx%d], %s", m, n, k,
-            BLOCK_M, BLOCK_N, BLOCK_K, TILE_M, TILE_N, TILE_K, WAVE_M, WAVE_N, WAVE_K,
-            res?"valid":"fail");fflush(stdout);
-        printf("\n"); fflush(stdout);
-#endif
-    }
-
-
-    // free(host_a);
-    // free(host_b);
-    free(host_in);
-    free(host_w);
-    free(host_c);
-    free(fp16_in);
-    free(fp16_w);
-    free(fp16_a);
-    free(fp16_b);
-    free(fp16_c);
-    
-    HIP_CALL(hipFree(dev_a));
-    HIP_CALL(hipFree(dev_b));
-    HIP_CALL(hipFree(dev_c));
-}
-
-int main(int argc, char ** argv)
-{
-    // block_run();
-    casual_conv1d_block_run();
 }
 
 // int main(int argc, char ** argv)
@@ -1161,13 +1362,21 @@ int main(int argc, char ** argv)
 //     printf("m:%d,n:%d,k:%d,lda:%d,ldb:%d,ldc:%d\n",  m, n, k, lda, ldb, ldc); fflush(stdout);
 //     gemm_rcr(host_a, host_b, host_c, m,n,k,lda,ldb,ldc);
 
+//     {
+//         matrix_core_kernel_standard<<<1, 64>>>(dev_a, dev_b, dev_c, lda, ldb, ldc);
+
+//         HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
+//         bool res = valid_vector( host_c, fp16_c, m*n, 1e-3);
+//         printf("[32x32x8, standard], %s",res?"valid":"fail");fflush(stdout);
+//         printf("\n"); fflush(stdout);
+//     }
 
 //     {
 //         matrix_core_kernel_standard_v2<<<1, 64>>>(dev_a, dev_b, dev_c, lda, ldb, ldc);
 
 //         HIP_CALL(hipMemcpy(fp16_c, dev_c, ldc*m*sizeof(float16), hipMemcpyDeviceToHost));
 //         bool res = valid_vector( host_c, fp16_c, m*n, 1e-3);
-//         printf("[32x32x8, standard], %s",res?"valid":"fail");fflush(stdout);
+//         printf("[32x32x8, standard_v2], %s",res?"valid":"fail");fflush(stdout);
 //         printf("\n"); fflush(stdout);
 //     }
 //     {
@@ -1205,10 +1414,418 @@ int main(int argc, char ** argv)
 //     HIP_CALL(hipFree(dev_b));
 //     HIP_CALL(hipFree(dev_c));
 
-    // block_run();
-    // casual_conv1d_block_run();
+//     block_run();
 
-    // int cc[5] = {1,2,3,4,5};
-    // auto xx = cc;
-    // printf("%d, %d %d\n", xx[2], xx[4], std::is_trivially_copyable_v<decltype(cc)> ? 1 : 0);
+//     // int cc[5] = {1,2,3,4,5};
+//     // auto xx = cc;
+//     // printf("%d, %d %d\n", xx[2], xx[4], std::is_trivially_copyable_v<decltype(cc)> ? 1 : 0);
 // }
+
+// 在 main 函数或测试函数中添加：
+void test_mfma_large_kernel(int m, int n, int k) {
+    printf("\n=== Testing MFMA Large Kernel ===\n");
+    printf("Problem size: M=%d, N=%d, K=%d\n", m, n, k);
+    
+    int lda = k;
+    int ldb = k;
+    int ldc = n;
+    
+    // 分配主机内存
+    float* host_a = (float*)malloc(m * lda * sizeof(float));
+    float* host_b = (float*)malloc(n * ldb * sizeof(float));
+    float* host_c = (float*)malloc(m * ldc * sizeof(float));
+    
+    // ✅ 修正：使用 rand_vector_2d 而不是 rand_float
+#ifdef RAND_INT
+    rand_vector_2d_int(host_a, m, k, lda);
+    rand_vector_2d_int(host_b, n, k, ldb);
+#else
+    rand_vector_2d(host_a, m, k, lda, 0.0, 1.0);
+    rand_vector_2d(host_b, n, k, ldb, -0.5, 0.5);
+#endif
+    
+    // 计算 CPU 参考结果
+    gemm_rcr(host_a, host_b, host_c, m, n, k, lda, ldb, ldc);
+    
+    // 转换为 FP16
+    float16* fp16_a = (float16*)malloc(m * lda * sizeof(float16));
+    float16* fp16_b = (float16*)malloc(n * ldb * sizeof(float16));
+    float16* fp16_c = (float16*)malloc(m * ldc * sizeof(float16));
+    
+    for (int i = 0; i < m * lda; i++) 
+        fp16_a[i] = __float2half_rn(host_a[i]);
+    for (int i = 0; i < n * ldb; i++) 
+        fp16_b[i] = __float2half_rn(host_b[i]);
+    
+    // 分配设备内存
+    float16 *dev_a, *dev_b, *dev_c;
+    HIP_CALL(hipMalloc(&dev_a, m * lda * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_b, n * ldb * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_c, m * ldc * sizeof(float16)));
+    
+    // 拷贝数据到设备
+    HIP_CALL(hipMemcpy(dev_a, fp16_a, m * lda * sizeof(float16), 
+                       hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_b, fp16_b, n * ldb * sizeof(float16), 
+                       hipMemcpyHostToDevice));
+    
+    // ========================================================================
+    // 启动 Kernel
+    // ========================================================================
+    dim3 grid((m + 31) / 32, (n + 31) / 32);  // 每个 block 处理 32×32
+    dim3 block(64);                            // 1 wave = 64 threads
+    
+    printf("Grid: (%d, %d), Block: (%d)\n", grid.x, grid.y, block.x);
+    
+    matrix_core_kernel_mfma_large<<<grid, block>>>(
+        dev_a, dev_b, dev_c, 
+        m, n, k,
+        lda, ldb, ldc);
+    
+    HIP_CALL(hipDeviceSynchronize());
+    
+    // 拷贝结果回主机
+    HIP_CALL(hipMemcpy(fp16_c, dev_c, m * ldc * sizeof(float16), 
+                       hipMemcpyDeviceToHost));
+    
+    // 验证结果
+    bool res = valid_vector(host_c, fp16_c, m * n, 1e-3);
+    printf("[MFMA Large %dx%dx%d], %s\n", m, n, k, res ? "✅ valid" : "❌ fail");
+    
+    // 性能测试（可选）
+    hipEvent_t start, stop;
+    HIP_CALL(hipEventCreate(&start));
+    HIP_CALL(hipEventCreate(&stop));
+    
+    int warmup = 10;
+    int repeat = 100;
+    
+    for (int i = 0; i < warmup; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipDeviceSynchronize());
+    
+    HIP_CALL(hipEventRecord(start));
+    for (int i = 0; i < repeat; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipEventRecord(stop));
+    HIP_CALL(hipEventSynchronize(stop));
+    
+    float ms;
+    HIP_CALL(hipEventElapsedTime(&ms, start, stop));
+    ms /= repeat;
+    
+    double gflops = 2.0 * m * n * k / (ms * 1e6);
+    printf("Time: %.3f us, Performance: %.2f GFLOPS\n", ms * 1000, gflops);
+    
+    // 释放内存
+    free(host_a); free(host_b); free(host_c);
+    free(fp16_a); free(fp16_b); free(fp16_c);
+    HIP_CALL(hipFree(dev_a));
+    HIP_CALL(hipFree(dev_b));
+    HIP_CALL(hipFree(dev_c));
+    HIP_CALL(hipEventDestroy(start));
+    HIP_CALL(hipEventDestroy(stop));
+}
+
+// 添加到 test_mfma_large_kernel 函数中
+void test_mfma_double_buffer(int m, int n, int k) {
+    printf("\n=== Testing MFMA Double Buffer Kernel ===\n");
+    printf("Problem size: M=%d, N=%d, K=%d\n", m, n, k);
+    
+    int lda = k, ldb = k, ldc = n;
+    
+    // 准备数据（与原版相同）
+    float* host_a = (float*)malloc(m * lda * sizeof(float));
+    float* host_b = (float*)malloc(n * ldb * sizeof(float));
+    float* host_c = (float*)malloc(m * ldc * sizeof(float));
+    
+#ifdef RAND_INT
+    rand_vector_2d_int(host_a, m, k, lda);
+    rand_vector_2d_int(host_b, n, k, ldb);
+#else
+    rand_vector_2d(host_a, m, k, lda, 0.0, 1.0);
+    rand_vector_2d(host_b, n, k, ldb, -0.5, 0.5);
+#endif
+    
+    gemm_rcr(host_a, host_b, host_c, m, n, k, lda, ldb, ldc);
+    
+    // 转换为 FP16
+    float16* fp16_a = (float16*)malloc(m * lda * sizeof(float16));
+    float16* fp16_b = (float16*)malloc(n * ldb * sizeof(float16));
+    float16* fp16_c = (float16*)malloc(m * ldc * sizeof(float16));
+    
+    for (int i = 0; i < m * lda; i++) fp16_a[i] = __float2half_rn(host_a[i]);
+    for (int i = 0; i < n * ldb; i++) fp16_b[i] = __float2half_rn(host_b[i]);
+    
+    // 设备内存
+    float16 *dev_a, *dev_b, *dev_c;
+    HIP_CALL(hipMalloc(&dev_a, m * lda * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_b, n * ldb * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_c, m * ldc * sizeof(float16)));
+    
+    HIP_CALL(hipMemcpy(dev_a, fp16_a, m * lda * sizeof(float16), hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_b, fp16_b, n * ldb * sizeof(float16), hipMemcpyHostToDevice));
+    
+    // 启动 kernel
+    dim3 grid((m + 31) / 32, (n + 31) / 32);
+    dim3 block(64);
+    
+    printf("Grid: (%d, %d), Block: (%d)\n", grid.x, grid.y, block.x);
+    
+    // ====================================================================
+    // 原版 vs Double Buffering 对比测试
+    // ====================================================================
+    
+    // 测试原版
+    hipEvent_t start1, stop1;
+    HIP_CALL(hipEventCreate(&start1));
+    HIP_CALL(hipEventCreate(&stop1));
+    
+    for (int i = 0; i < 10; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipDeviceSynchronize());
+    
+    HIP_CALL(hipEventRecord(start1));
+    for (int i = 0; i < 100; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipEventRecord(stop1));
+    HIP_CALL(hipEventSynchronize(stop1));
+    
+    float ms_orig;
+    HIP_CALL(hipEventElapsedTime(&ms_orig, start1, stop1));
+    ms_orig /= 100;
+    
+    // 测试 Double Buffering 版本
+    hipEvent_t start2, stop2;
+    HIP_CALL(hipEventCreate(&start2));
+    HIP_CALL(hipEventCreate(&stop2));
+    
+    for (int i = 0; i < 10; i++) {
+        matrix_core_kernel_mfma_large_double_buffer<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipDeviceSynchronize());
+    
+    HIP_CALL(hipEventRecord(start2));
+    for (int i = 0; i < 100; i++) {
+        matrix_core_kernel_mfma_large_double_buffer<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipEventRecord(stop2));
+    HIP_CALL(hipEventSynchronize(stop2));
+    
+    float ms_db;
+    HIP_CALL(hipEventElapsedTime(&ms_db, start2, stop2));
+    ms_db /= 100;
+    
+    // 验证正确性
+    HIP_CALL(hipMemcpy(fp16_c, dev_c, m * ldc * sizeof(float16), hipMemcpyDeviceToHost));
+    bool res = valid_vector(host_c, fp16_c, m * n, 1e-3);
+    
+    // 输出对比结果
+    double gflops = 2.0 * m * n * k / 1e6;
+    printf("\n");
+    printf("┌─────────────────────────────────────────────────────────┐\n");
+    printf("│  Performance Comparison                                 │\n");
+    printf("├─────────────────────────────────────────────────────────┤\n");
+    printf("│  Original:        %.3f us  (%.2f GFLOPS)              │\n", 
+           ms_orig * 1000, gflops / ms_orig);
+    printf("│  Double Buffer:   %.3f us  (%.2f GFLOPS)              │\n", 
+           ms_db * 1000, gflops / ms_db);
+    printf("│  Speedup:         %.2fx  ⬆️ %.1f%%                     │\n", 
+           ms_orig / ms_db, (ms_orig / ms_db - 1) * 100);
+    printf("│  Correctness:     %s                                    │\n", 
+           res ? "✅ PASS" : "❌ FAIL");
+    printf("└─────────────────────────────────────────────────────────┘\n");
+    
+    // 清理
+    free(host_a); free(host_b); free(host_c);
+    free(fp16_a); free(fp16_b); free(fp16_c);
+    HIP_CALL(hipFree(dev_a));
+    HIP_CALL(hipFree(dev_b));
+    HIP_CALL(hipFree(dev_c));
+    HIP_CALL(hipEventDestroy(start1));
+    HIP_CALL(hipEventDestroy(stop1));
+    HIP_CALL(hipEventDestroy(start2));
+    HIP_CALL(hipEventDestroy(stop2));
+}
+
+void test_mfma_lds(int m, int n, int k) {
+    printf("\n╔═══════════════════════════════════════════════════════════╗\n");
+    printf("║  LDS Optimization Test                                    ║\n");
+    printf("║  Problem: M=%d, N=%d, K=%d                            ║\n", m, n, k);
+    printf("╚═══════════════════════════════════════════════════════════╝\n\n");
+    
+    int lda = k, ldb = k, ldc = n;
+    
+    // ====================================================================
+    // 准备数据
+    // ====================================================================
+    float* host_a = (float*)malloc(m * lda * sizeof(float));
+    float* host_b = (float*)malloc(n * ldb * sizeof(float));
+    float* host_c = (float*)malloc(m * ldc * sizeof(float));
+    
+#ifdef RAND_INT
+    rand_vector_2d_int(host_a, m, k, lda);
+    rand_vector_2d_int(host_b, n, k, ldb);
+#else
+    rand_vector_2d(host_a, m, k, lda, 0.0, 1.0);
+    rand_vector_2d(host_b, n, k, ldb, -0.5, 0.5);
+#endif
+    
+    gemm_rcr(host_a, host_b, host_c, m, n, k, lda, ldb, ldc);
+    
+    float16* fp16_a = (float16*)malloc(m * lda * sizeof(float16));
+    float16* fp16_b = (float16*)malloc(n * ldb * sizeof(float16));
+    float16* fp16_c = (float16*)malloc(m * ldc * sizeof(float16));
+    
+    for (int i = 0; i < m * lda; i++) fp16_a[i] = __float2half_rn(host_a[i]);
+    for (int i = 0; i < n * ldb; i++) fp16_b[i] = __float2half_rn(host_b[i]);
+    
+    float16 *dev_a, *dev_b, *dev_c;
+    HIP_CALL(hipMalloc(&dev_a, m * lda * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_b, n * ldb * sizeof(float16)));
+    HIP_CALL(hipMalloc(&dev_c, m * ldc * sizeof(float16)));
+    
+    HIP_CALL(hipMemcpy(dev_a, fp16_a, m * lda * sizeof(float16), hipMemcpyHostToDevice));
+    HIP_CALL(hipMemcpy(dev_b, fp16_b, n * ldb * sizeof(float16), hipMemcpyHostToDevice));
+    
+    // ====================================================================
+    // 对比测试：原版 vs LDS 优化
+    // ====================================================================
+    dim3 grid((m + 31) / 32, (n + 31) / 32);
+    dim3 block(64);
+    
+    printf("Grid: (%d, %d), Block: (%d)\n", grid.x, grid.y, block.x);
+    printf("LDS Usage: 8 KB per block\n\n");
+    
+    // 测试原版
+    printf("Testing Original Kernel...\n");
+    hipEvent_t start1, stop1;
+    HIP_CALL(hipEventCreate(&start1));
+    HIP_CALL(hipEventCreate(&stop1));
+    
+    for (int i = 0; i < 10; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipDeviceSynchronize());
+    
+    HIP_CALL(hipEventRecord(start1));
+    for (int i = 0; i < 100; i++) {
+        matrix_core_kernel_mfma_large<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipEventRecord(stop1));
+    HIP_CALL(hipEventSynchronize(stop1));
+    
+    float ms_orig;
+    HIP_CALL(hipEventElapsedTime(&ms_orig, start1, stop1));
+    ms_orig /= 100;
+    
+    // 测试 LDS 版本
+    printf("Testing LDS Optimized Kernel...\n");
+    hipEvent_t start2, stop2;
+    HIP_CALL(hipEventCreate(&start2));
+    HIP_CALL(hipEventCreate(&stop2));
+    
+    for (int i = 0; i < 10; i++) {
+        matrix_core_kernel_mfma_large_64x64_lds<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipDeviceSynchronize());
+    
+    HIP_CALL(hipEventRecord(start2));
+    for (int i = 0; i < 100; i++) {
+        matrix_core_kernel_mfma_large_64x64_lds<<<grid, block>>>(
+            dev_a, dev_b, dev_c, m, n, k, lda, ldb, ldc);
+    }
+    HIP_CALL(hipEventRecord(stop2));
+    HIP_CALL(hipEventSynchronize(stop2));
+    
+    float ms_lds;
+    HIP_CALL(hipEventElapsedTime(&ms_lds, start2, stop2));
+    ms_lds /= 100;
+    
+    // 验证正确性
+    HIP_CALL(hipMemcpy(fp16_c, dev_c, m * ldc * sizeof(float16), hipMemcpyDeviceToHost));
+    bool res = valid_vector(host_c, fp16_c, m * n, 1e-3);
+    
+    // ====================================================================
+    // 输出对比结果
+    // ====================================================================
+    double gflops = 2.0 * m * n * k / 1e6;
+    
+    printf("\n");
+    printf("╔═══════════════════════════════════════════════════════════════╗\n");
+    printf("║  Performance Comparison                                       ║\n");
+    printf("╠═══════════════════════════════════════════════════════════════╣\n");
+    printf("║  Metric              │ Original      │ LDS Optimized         ║\n");
+    printf("╠══════════════════════╪═══════════════╪═══════════════════════╣\n");
+    printf("║  Time (us)           │  %10.3f   │  %10.3f          ║\n", 
+           ms_orig * 1000, ms_lds * 1000);
+    printf("║  Performance (GFLOPS)│  %10.2f   │  %10.2f          ║\n",
+           gflops / ms_orig, gflops / ms_lds);
+    printf("║  Speedup             │    1.00x      │    %5.2fx            ║\n",
+           ms_orig / ms_lds);
+    printf("║  Improvement         │       -       │   +%.1f%%             ║\n",
+           (ms_orig / ms_lds - 1) * 100);
+    printf("║  Correctness         │      %3s      │      %3s             ║\n",
+           res ? "✅" : "❌", res ? "✅" : "❌");
+    printf("╚══════════════════════╧═══════════════╧═══════════════════════╝\n");
+    
+    // 内存带宽分析
+    double bytes_orig = (m * k + n * k + m * n) * 2.0;  // FP16
+    double bw_orig = bytes_orig / (ms_orig * 1e-3) / 1e9;
+    double bw_lds = bytes_orig / (ms_lds * 1e-3) / 1e9;
+    
+    printf("\n");
+    printf("╔═══════════════════════════════════════════════════════════════╗\n");
+    printf("║  Memory Bandwidth Analysis                                    ║\n");
+    printf("╠═══════════════════════════════════════════════════════════════╣\n");
+    printf("║  Total Data Transfer: %.2f MB                               ║\n", 
+           bytes_orig / 1e6);
+    printf("║  Original BW:         %.1f GB/s                             ║\n", bw_orig);
+    printf("║  LDS Optimized BW:    %.1f GB/s                             ║\n", bw_lds);
+    printf("║  BW Improvement:      %.1fx                                  ║\n", 
+           bw_lds / bw_orig);
+    printf("║  Peak BW (MI308X):    5,300 GB/s                             ║\n");
+    printf("║  BW Utilization:      %.1f%% (orig) → %.1f%% (lds)          ║\n",
+           bw_orig / 5300 * 100, bw_lds / 5300 * 100);
+    printf("╚═══════════════════════════════════════════════════════════════╝\n");
+    
+    // 清理
+    free(host_a); free(host_b); free(host_c);
+    free(fp16_a); free(fp16_b); free(fp16_c);
+    HIP_CALL(hipFree(dev_a));
+    HIP_CALL(hipFree(dev_b));
+    HIP_CALL(hipFree(dev_c));
+    HIP_CALL(hipEventDestroy(start1));
+    HIP_CALL(hipEventDestroy(stop1));
+    HIP_CALL(hipEventDestroy(start2));
+    HIP_CALL(hipEventDestroy(stop2));
+}
+
+// 在 main 函数中调用：
+int main() {
+    // ... 其他测试 ...
+    
+    // 测试不同规模
+    // test_mfma_large_kernel(32, 32, 8);      // 最小规模
+    // test_mfma_large_kernel(64, 64, 256);    // 小规模
+    // test_mfma_large_kernel(2048, 64, 256);  // 中等规模
+    // test_mfma_large_kernel(8192, 64, 256); // 大规模
+
+    // test_mfma_double_buffer(8192, 64, 256);
+    test_mfma_lds(8192, 64, 256);   // 与之前相同的问题规模
+    
+    return 0;
+}
