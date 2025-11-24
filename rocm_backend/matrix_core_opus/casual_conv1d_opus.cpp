@@ -6,7 +6,7 @@
 #include <math.h>
 #include <stdio.h>
 #include <numeric>
-#include <torch/torch.h>
+// #include <torch/torch.h>  // 暂时注释，融合kernel不需要
 #include <cstring>
 #define HALF
 #ifdef HALF
@@ -168,6 +168,94 @@ void causal_conv1d_img2col(const float* input, const float* weight, const float*
     }
 }
 
+// A: M*K, B: N*K, C:M*N, use 32x32x8 fp16
+/*
+* V0/V1/   is 32bit register holding A/B matrix data, each register contains 2 fp16 pixel along gemm-k
+* a0/a1... is 32bit register holding C matrix data in fp32 (this instruction use fp32 as acc)
+* L0, L1.. is lane id with in a single wave, here we only have lane 0~63 (wave64)
+* each thread need 2 registers for A, 2 regs for B, 16 regs for C
+
+                                 L0 L1 L2 L3 L4 L5 L6 L7 L8 L9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+                       Matrix B   __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k0  L0~31
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k1
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k2
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k3
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k4  L32~63
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k5
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k6
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k7
+     Matrix A
+     L0~31       L32~63           Matrix C
+     k0 k1 k2 k3 k4 k5 k6 k7      L0 L1 L2 L3 L4 L5 L6 L7 L8 L9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+     _____ _____|_____ _____      __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+L0  |v0   |v1   |v0   |v1   |    |a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0| L0~31
+L1  |v0   |v1   |v0   |v1   |    |a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|
+L2  |v0   |v1   |v0   |v1   |    |a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|
+L3  |v0   |v1   |v0   |v1   |   _|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|_
+L4  |v0   |v1   |v0   |v1   |    |a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0|a0| L32~63
+L5  |v0   |v1   |v0   |v1   |    |a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|a1|
+L6  |v0   |v1   |v0   |v1   |    |a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|a2|
+L7  |v0   |v1   |v0   |v1   |   _|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|a3|_
+L8  |v0   |v1   |v0   |v1   |    |a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4| L0~31
+L9  |v0   |v1   |v0   |v1   |    |a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|
+L10 |v0   |v1   |v0   |v1   |    |a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|
+L11 |v0   |v1   |v0   |v1   |   _|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|_
+L12 |v0   |v1   |v0   |v1   |    |a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4|a4| L32~63
+L13 |v0   |v1   |v0   |v1   |    |a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|a5|
+L14 |v0   |v1   |v0   |v1   |    |a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|a6|
+L15 |v0   |v1   |v0   |v1   |   _|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|a7|_
+L16 |v0   |v1   |v0   |v1   |    |a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8| L0~31
+L17 |v0   |v1   |v0   |v1   |    |a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|
+L18 |v0   |v1   |v0   |v1   |    |10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|
+L19 |v0   |v1   |v0   |v1   |   _|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|_
+L20 |v0   |v1   |v0   |v1   |    |a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8|a8| L32~63
+L21 |v0   |v1   |v0   |v1   |    |a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|a9|
+L22 |v0   |v1   |v0   |v1   |    |10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|10|
+L23 |v0   |v1   |v0   |v1   |   _|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|11|_
+L24 |v0   |v1   |v0   |v1   |    |12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12| L0~31
+L25 |v0   |v1   |v0   |v1   |    |13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|
+L26 |v0   |v1   |v0   |v1   |    |14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|
+L27 |v0   |v1   |v0   |v1   |   _|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|_
+L28 |v0   |v1   |v0   |v1   |    |12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12|12| L32~63
+L29 |v0   |v1   |v0   |v1   |    |13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|13|
+L30 |v0   |v1   |v0   |v1   |    |14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|14|
+L31 |v0___|v1___|v0___|v1___|   _|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|15|_
+                |
+*/
+__global__ void 
+matrix_core_kernel_standard(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    // 32x32x8 gemm, assume only launced 1 wave
+    int offset_a = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_a);
+    int offset_b = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_b);
+
+    fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_a) + offset_a);
+    fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_b) + offset_b);
+    fp32x16_t v_c = {.0f};  // clear
+
+    v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_a, v_b, v_c, 0, 0, 0);
+
+    fp16x16_t v_c_f16;
+    for(auto i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+
+    int col_id_c = threadIdx.x % 32;
+    int row_id_c = threadIdx.x / 32 * 4;
+    int offset_c = row_id_c * stride_c + col_id_c;
+
+    for(auto i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
 template<int BLOCK_SIZE, int BLOCK_M, int BLOCK_N, int BLOCK_K, int TILE_M, int TILE_N, int TILE_K, int WAVE_M, int WAVE_N, int WAVE_K>
 __global__ void matrix_core_kernel_block_v2(const void* __restrict__ ptr_a,
                                          const void* __restrict__ ptr_b,
@@ -249,6 +337,345 @@ __global__ void matrix_core_kernel_block_v2(const void* __restrict__ ptr_a,
 #endif
 }
 
+__global__ void 
+matrix_core_kernel_standard_agpr(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    // 32x32x8 gemm, assume only launced 1 wave
+    int offset_a = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_a);
+    int offset_b = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_b);
+
+    auto res_a = make_buffer_resource(ptr_a);
+    auto res_b = make_buffer_resource(ptr_b);
+    fp16x4_t v_a, v_b;
+
+    asm volatile("buffer_load_dwordx2 %0, %1, %2, 0 offen offset:%3"
+            :"+a"(v_a) :  "v"(static_cast<int>(offset_a * sizeof(fp16_t))), "s"(res_a), "n"(0) : "memory");
+
+    asm volatile("buffer_load_dwordx2 %0, %1, %2, 0 offen offset:%3"
+            :"+a"(v_b) :  "v"(static_cast<int>(offset_b * sizeof(fp16_t))), "s"(res_b), "n"(0) : "memory");
+
+    fp32x16_t v_c = {.0f};  // clear
+
+#if LOCAL_SCRATCH == 1
+    // create 2 local scratch, note this is x8, not x4(purposely)
+    fp16x8_t v_aa, v_bb;
+    for(auto i = 0; i < 4; i++) v_aa[i] = v_a[i];
+    for(auto i = 0; i < 4; i++) v_bb[i] = v_b[i];
+
+    // Note the local scratch re-assignment is before this waitcnt
+    // but this is fine, since finally compiler will remove all such
+    // (redundant) movement for us
+    asm volatile("s_waitcnt vmcnt(0)"  : : : "memory");
+    
+    // this is local scratch used for mfma
+    fp16x4_t v_ar, v_br;
+    for(auto i = 0; i < 4; i++) v_ar[i] = v_aa[i];
+    for(auto i = 0; i < 4; i++) v_br[i] = v_bb[i];
+    asm volatile("v_mfma_f32_32x32x8f16 %0, %1, %2, %3\n" "s_nop 16" : "+v"(v_c) :  "a"(v_ar), "a"(v_br),  "v"(v_c) : );
+#elif LOCAL_SCRATCH == 2
+    // use different type for local scratch
+    fp32x4_t v_aa, v_bb;
+    for(auto i = 0; i < 2; i++) { fp16x2_t tmp; tmp[0] = v_a[2 * i + 0]; tmp[1] = v_a[2 * i + 1]; v_aa[i] = __builtin_bit_cast(float, tmp); }
+    for(auto i = 0; i < 2; i++) { fp16x2_t tmp; tmp[0] = v_b[2 * i + 0]; tmp[1] = v_b[2 * i + 1]; v_bb[i] = __builtin_bit_cast(float, tmp); }
+
+    asm volatile("s_waitcnt vmcnt(0)"  : : : "memory");
+
+    fp16x4_t v_ar, v_br;
+    for(auto i = 0; i < 2; i++) { fp16x2_t tmp; tmp = __builtin_bit_cast(fp16x2_t, v_aa[i]); v_ar[2 * i + 0] = tmp[0]; v_ar[2 * i + 1] = tmp[1]; }
+    for(auto i = 0; i < 2; i++) { fp16x2_t tmp; tmp = __builtin_bit_cast(fp16x2_t, v_bb[i]); v_br[2 * i + 0] = tmp[0]; v_br[2 * i + 1] = tmp[1]; }
+    asm volatile("v_mfma_f32_32x32x8f16 %0, %1, %2, %3\n" "s_nop 16" : "+v"(v_c) :  "a"(v_ar), "a"(v_br),  "v"(v_c) : );
+#else
+    asm volatile("s_waitcnt vmcnt(0)"  : : : "memory");
+    asm volatile("v_mfma_f32_32x32x8f16 %0, %1, %2, %3\n"
+                 "s_nop 16"         // TODO: better resolve data dependency
+                 : "+v"(v_c)
+                 :  "a"(v_a), "a"(v_b),  "v"(v_c) : );
+#endif
+
+    fp16x16_t v_c_f16;
+    for(auto i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+
+    int col_id_c = threadIdx.x % 32;
+    int row_id_c = threadIdx.x / 32 * 4;
+    int offset_c = row_id_c * stride_c + col_id_c;
+
+    for(auto i = 0; i < 16; i++) {
+        int row_offset = (i % 4) + (i / 4 * 8);
+        *(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + row_offset * stride_c) = v_c_f16[i];
+    }
+}
+
+// kernel-2, swap A/B pointer to transpose C matrix, now we can do vector store
+/*
+* Note: C matrix now is transposed, we can do vectore store out(assum C fast changing dim is N)
+
+                                 L0 L1 L2 L3 L4 L5 L6 L7 L8 L9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+             (swapped) Matrix A   __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k0  L0~31
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k1
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k2
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k3
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k4  L32~63
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k5
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k6
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k7
+     Matrix B (swapped)
+     L0~31       L32~63           Matrix C (transposed)
+     k0 k1 k2 k3 k4 k5 k6 k7      L0~31       L32~63      L0~31       L32~63      L0~31       L32~63      L0~31       L32~63
+     _____ _____|_____ _____      __ __ __ __|__ __ __ __|__ __ __ __|__ __ __ __|__ __ __ __|__ __ __ __|__ __ __ __|__ __ __ __
+L0  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L0 
+L1  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L1 
+L2  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L2 
+L3  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L3 
+L4  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L4 
+L5  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L5 
+L6  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L6 
+L7  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L7 
+L8  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L8 
+L9  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L9 
+L10 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L10
+L11 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L11
+L12 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L12
+L13 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L13
+L14 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L14
+L15 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L15
+L16 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L16
+L17 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L17
+L18 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L18
+L19 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L19
+L20 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L20
+L21 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L21
+L22 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L22
+L23 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L23
+L24 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L24
+L25 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L25
+L26 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L26
+L27 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L27
+L28 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L28
+L29 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L29
+L30 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L30
+L31 |v0___|v1___|v0___|v1___|    |a0|a1|a2|a3|a0|a1|a2|a3|a4|a5|a6|a7|a4|a5|a6|a7|a8|a9|10|11|a8|a9|10|11|12|13|14|15|12|13|14|15|  L31
+                |                            |           |           |           |           |           |           |
+
+*/
+__global__ void 
+matrix_core_kernel_swap_a_b(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    // 32x32x8 gemm, assume only launced 1 wave
+    int offset_a = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_a);
+    int offset_b = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_b);
+
+    fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_a) + offset_a);
+    fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_b) + offset_b);
+    fp32x16_t v_c = {.0f};  // clear
+
+    v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_b, v_a, v_c, 0, 0, 0);
+
+    fp16x16_t v_c_f16;
+    for(auto i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+
+    int col_id_c = threadIdx.x / 32 * 4; 
+    int row_id_c = threadIdx.x % 32;
+    int offset_c = row_id_c * stride_c + col_id_c;
+
+    for(auto i = 0; i < (16 / 4); i++) {
+        int col_offset = i * 8;
+        fp16x4_t tmp;
+        tmp.x = v_c_f16[4 * i + 0]; tmp.y = v_c_f16[4 * i + 1];
+        tmp.z = v_c_f16[4 * i + 2]; tmp.w = v_c_f16[4 * i + 3];
+        *reinterpret_cast<fp16x4_t*>(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + col_offset) = tmp;
+    }
+}
+
+__global__ void 
+matrix_core_kernel_swap_a_b_v2(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    using opus::operator""_I;
+    auto mfma = opus::make_mfma<opus::fp16_t, opus::fp16_t, opus::fp32_t>(32_I, 32_I, 8_I, opus::mfma_adaptor_swap_ab{});
+
+    auto s_a = opus::make_tuple(stride_a, 1_I);
+    auto u_a = opus::partition_layout_a(mfma, s_a);
+
+    auto u_b = opus::partition_layout_b(mfma, opus::make_tuple(stride_b, 1_I));
+
+    auto g_a = opus::make_gmem(reinterpret_cast<const opus::fp16x4_t*>(ptr_a));
+    auto g_b = opus::make_gmem(reinterpret_cast<const opus::fp16x4_t*>(ptr_b));
+
+    opus::fp16x4_t v_a = g_a.load(u_a(threadIdx.x % mfma.grpm_a, 0_I, threadIdx.x / mfma.grpm_a, 0_I) / 4_I); // [lane_m(P), rept_k(Y), lane_k(P), pack_k(Y)]
+    opus::fp16x4_t v_b = g_b.load(u_b(threadIdx.x % mfma.grpn_b, 0_I, threadIdx.x / mfma.grpn_b, 0_I) / 4_I);
+    opus::fp32x16_t v_c = {.0f};  // clear
+ 
+    v_c = mfma(v_a, v_b, v_c); // note here swapped a/b
+
+    fp16x16_t v_c_f16 = opus::cast<fp16_t>(v_c);
+
+    // C:[grpn_c(P), rept_c(Y), grpm_c(P), pack_c(Y)]
+    auto u_c = opus::partition_layout_c(mfma);
+
+    auto g_c = opus::make_gmem(reinterpret_cast<opus::fp16x4_t*>(ptr_c));
+
+#if 1
+    for(auto i = 0; i < (16 / 4); i++) {
+        auto tmp = opus::slice<4>(v_c_f16, 4*i, 4*i+4);
+        g_c.store(tmp, u_c( threadIdx.x % mfma.grpn_c, i, threadIdx.x / mfma.grpn_c, 0_I) / 4_I);   // C:[grpn_c(P), rept_c(Y), grpm_c(P), pack_c(Y)]
+    }
+#else
+    opus::static_for<16/4>([&](auto i){
+        auto tmp = opus::slice(v_c_f16, opus::number<4*i>{}, opus::number<4*i+4>{});
+        // auto tmp = opus::slice<4>(v_c_f16, 4*i, 4*i+4);
+        g_c.store<4>(tmp, u_c( threadIdx.x % mfma.grpn_c, i, threadIdx.x / mfma.grpn_c, 0_I));  
+    });
+#endif
+}
+
+#if  1
+__global__ void 
+matrix_core_kernel_swap_a_b_v3(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    using opus::operator""_I;
+    auto mfma = opus::make_mfma<opus::fp16_t, opus::fp16_t, opus::fp32_t>(opus::seq<32, 32, 8>{}, opus::mfma_adaptor_swap_ab{});
+
+    auto u_a = opus::partition_layout_a_packed(mfma, opus::make_tuple(threadIdx.x % mfma.grpm_a, threadIdx.x / mfma.grpm_a));   // A:[(grpm_a<p>), (rept_a<y>, grpk_a<p>, pack_a<y>)], MxK
+    auto u_b = opus::partition_layout_b_packed(mfma, opus::make_tuple(threadIdx.x % mfma.grpn_b, threadIdx.x / mfma.grpn_b));
+
+    auto g_a = opus::make_gmem(reinterpret_cast<const opus::fp16_t*>(ptr_a));
+    auto g_b = opus::make_gmem(reinterpret_cast<const opus::fp16_t*>(ptr_b));
+
+    auto v_a = g_a.load<4>(u_a(0_I, 0_I)); // [lane_m(P), rept_k(Y), lane_k(P), pack_k(Y)]
+    auto v_b = g_b.load<4>(u_b(0_I, 0_I));
+    opus::fp32x16_t v_c{.0f};  // clear
+ 
+    v_c = mfma(v_a, v_b, v_c); // note here swapped a/b
+
+    fp16x16_t v_c_f16 = opus::cast<fp16_t>(v_c);
+
+    // C:[grpn_c(P), rept_c(Y), grpm_c(P), pack_c(Y)]
+    auto u_c = opus::partition_layout_c_packed(mfma, opus::make_tuple(threadIdx.x % mfma.grpn_c, threadIdx.x / mfma.grpn_c));
+
+    auto g_c = opus::make_gmem(reinterpret_cast<opus::fp16_t*>(ptr_c));
+
+    for(auto i = 0; i < (16 / 4); i++) {
+        auto tmp = opus::slice<4>(v_c_f16, 4*i, 4*i+4);
+        g_c.store<4>(tmp, u_c(i,  0_I));
+    }
+}
+#endif
+
+// kernel-3, swap A/B pointer to transpose C matrix, and swizzle b(vector size is larger)
+/*
+* Note: C matrix now is transposed, we can do vectore store out(assum C fast changing dim is N), and vector size is larger
+
+                                 L0 L1 L2 L3 L4 L5 L6 L7 L8 L9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31
+             (swapped) Matrix A   __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __ __
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k0  L0~31
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k1
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k2
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k3
+                                 |v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0|v0| k4  L32~63
+                                 |__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__| k5
+                                 |v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1|v1| k6
+                                _|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|__|_k7
+Matrix B (swapped+swizzled)
+     L0~31       L32~63           Matrix C (transposed + increased vector size)
+     k0 k1 k2 k3 k4 k5 k6 k7      L0~31                   L32~63                  L0~31                   L32~63 
+     _____ _____|_____ _____      __ __ __ __ __ __ __ __|__ __ __ __ __ __ __ __|__ __ __ __ __ __ __ __|__ __ __ __ __ __ __ __
+L0  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L0 
+L1  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L1 
+L2  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L2 
+L3  |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L3 
+L8 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L4 
+L9 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L5 
+L10*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L6 
+L11*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L7 
+L4 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L8 
+L5 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L9 
+L6 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L10
+L7 *|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L11
+L12 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L12
+L13 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L13
+L14 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L14
+L15 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L15
+L16 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L16
+L17 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L17
+L18 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L18
+L19 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L19
+L24*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L20
+L25*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L21
+L26*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L22
+L27*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L23
+L20*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L24
+L21*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L25
+L22*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L26
+L23*|v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L27
+L28 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L28
+L29 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L29
+L30 |v0   |v1   |v0   |v1   |    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L30
+L31 |v0___|v1___|v0___|v1___|    |a0|a1|a2|a3|a4|a5|a6|a7|a0|a1|a2|a3|a4|a5|a6|a7|a8|a9|10|11|12|13|14|15|a8|a9|10|11|12|13|14|15|  L31
+                |                                        |                       |                       |            
+*/
+__global__ void 
+matrix_core_kernel_swap_swb(const void* __restrict__ ptr_a,
+                   const void* __restrict__ ptr_b,
+                   void* __restrict__ ptr_c,
+                   int stride_a, // stride in unit of pixel
+                   int stride_b,
+                   int stride_c)
+{
+    // 32x32x8 gemm, assume only launced 1 wave
+    int row_group_id_b = threadIdx.x % 32 / 4;
+    int row_id_b = threadIdx.x % 4 + row_group_id_b % 2 * 8 + row_group_id_b % 4 / 2 * 4 + row_group_id_b / 4 * 16;
+    int offset_a = (threadIdx.x / 32 * 4) + (threadIdx.x % 32 * stride_a);
+    int offset_b = (threadIdx.x / 32 * 4) + (row_id_b * stride_b);
+
+    // printf("tid:%d, rid:%d,%d, %d\n", static_cast<int>(threadIdx.x), row_id_b,row_group_id_b,  row_group_id_b % 4 / 2 * 4);
+
+    fp16x4_t v_a = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_a) + offset_a);
+    fp16x4_t v_b = *reinterpret_cast<const fp16x4_t*>(reinterpret_cast<const fp16_t*>(ptr_b) + offset_b);
+    fp32x16_t v_c = {.0f};  // clear
+
+    v_c = __builtin_amdgcn_mfma_f32_32x32x8f16(v_b, v_a, v_c, 0, 0, 0);
+
+    fp16x16_t v_c_f16;
+    for(auto i = 0; i < 16; i++) {
+        v_c_f16[i] = static_cast<fp16_t>(v_c[i]);
+    }
+
+    int col_id_c = threadIdx.x / 32 * 8;
+    int row_id_c = threadIdx.x % 32;
+    int offset_c = row_id_c * stride_c + col_id_c;
+
+    for(auto i = 0; i < (16 / 8); i++) {
+        int col_offset = i * 16;
+        fp16x8_t tmp;
+        for(auto j = 0; j < 8; j++) tmp[j] = v_c_f16[i * 8 + j];
+        *reinterpret_cast<fp16x8_t*>(reinterpret_cast<fp16_t*>(ptr_c) + offset_c + col_offset) = tmp;
+    }
+}
+
 // Depthwise Causal Conv1D with explicit left padding
 // input:  N x C x H
 // weight: C x kernel_size   (flattened as c*kernel_size)
@@ -303,6 +730,8 @@ void causal_conv1d_depthwise(
 }
 
 // 通用 Conv1d 函数
+// 注释掉 torch 依赖的函数，融合 kernel 不需要
+/*
 void casual_conv1d_rcr(float* input, float* output,
                 float* weight, float* bias,
                 int N, int C_in, int C_out, int L,
@@ -336,6 +765,7 @@ void casual_conv1d_rcr(float* input, float* output,
     // 打印输出形状
     std::cout << "Output shape: " << output_tensor.sizes() << " out_size: " << out_size << std::endl;
 }
+*/
 
 void transpose(const float* input, float* output, int rows, int cols) {
     for (int i = 0; i < rows; ++i) {
