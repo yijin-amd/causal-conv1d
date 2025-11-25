@@ -1,65 +1,79 @@
 #!/bin/bash
 
-# Compile and run full feature test (States + seq_idx)
-# Usage: ./run_full_test.sh [mode]
-#   mode: 0 or omit = all tests (default)
-#         1 = basic tests only
-#         2 = seq_idx tests only
-#         3 = states tests only
+# Channel-Last Backward Kernel - Compilation and Test Script
 
-set -e
+set -e  # Exit on error
 
-MODE=${1:-0}
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-# Validate mode
-if [ $MODE -lt 0 ] || [ $MODE -gt 3 ]; then
-    echo "Error: Invalid mode $MODE"
-    echo "Usage: $0 [mode]"
-    echo "  mode 0 or omit: Run all tests (default)"
-    echo "  mode 1: Run basic tests only"
-    echo "  mode 2: Run seq_idx tests only"
-    echo "  mode 3: Run states tests only"
-    exit 1
-fi
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
+
+# Determine test mode
+TEST_MODE=${1:-0}
 
 echo "======================================================================="
 echo " Compiling Channel-Last Backward - Full Feature Support"
 echo " (States + seq_idx + Multi-width)"
 echo "======================================================================="
 
+# Compile
 hipcc -O2 -std=c++17 --offload-arch=gfx942 \
-  causal_conv1d_channellast_bwd_hip.cpp \
-  -o test_channellast_bwd_full
+    causal_conv1d_channellast_bwd_kernel.hip \
+    test_channellast_bwd.cpp \
+    -o test_channellast_bwd
 
-echo ""
-echo "✓ Compilation successful!"
-echo ""
-
-if [ $MODE -eq 0 ]; then
-    MODE_STR="ALL (Basic + seq_idx + States)"
-elif [ $MODE -eq 1 ]; then
-    MODE_STR="BASIC ONLY"
-elif [ $MODE -eq 2 ]; then
-    MODE_STR="SEQ_IDX ONLY"
+if [ $? -eq 0 ]; then
+    echo -e "${GREEN}✓ Compilation successful!${NC}"
 else
-    MODE_STR="STATES ONLY"
+    echo -e "${RED}✗ Compilation failed!${NC}"
+    exit 1
 fi
 
+echo ""
 echo "======================================================================="
-echo " Running Tests: $MODE_STR"
+case $TEST_MODE in
+    0)
+        echo " Running Tests: ALL (Basic + seq_idx + States)"
+        ;;
+    1)
+        echo " Running Tests: BASIC ONLY"
+        ;;
+    2)
+        echo " Running Tests: SEQ_IDX ONLY"
+        ;;
+    3)
+        echo " Running Tests: STATES ONLY"
+        ;;
+    *)
+        echo -e "${RED}Invalid test mode: $TEST_MODE${NC}"
+        echo "Usage: $0 [mode]"
+        echo "  mode 0 or omit: Run all tests (default)"
+        echo "  mode 1: Run basic tests only"
+        echo "  mode 2: Run seq_idx tests only"
+        echo "  mode 3: Run states tests only"
+        exit 1
+        ;;
+esac
 echo "======================================================================="
 echo ""
 
-./test_channellast_bwd_full $MODE
+# Run tests
+./test_channellast_bwd $TEST_MODE
 
-exit_code=$?
-
-echo ""
-if [ $exit_code -eq 0 ]; then
-    echo "✓ All tests passed!"
+# Check test result
+if [ $? -eq 0 ]; then
+    echo ""
+    echo -e "${GREEN}✓ All tests passed!${NC}"
+    exit 0
 else
-    echo "✗ Some tests failed!"
+    echo ""
+    echo -e "${RED}✗ Some tests failed!${NC}"
+    exit 1
 fi
-
-exit $exit_code
 
