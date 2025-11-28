@@ -1,0 +1,2988 @@
+╔════════════════════════════════════════════════════════════════╗
+║  Channel-Last Causal Conv1D Test Suite                        ║
+╚════════════════════════════════════════════════════════════════╝
+
+Test Mode: ALL (Basic + seq_idx + final_states)
+
+
+=========================================
+Checking Prerequisites
+=========================================
+✓ hipcc found
+✓ Detected GPU: gfx942
+
+=========================================
+Compiling
+=========================================
+Flags: -O2 -std=c++17 --offload-arch=gfx942
+
+
+✓ Compilation successful!
+
+=========================================
+Running Tests
+=========================================
+
+╔════════════════════════════════════════════════════════════════╗
+║  Channel-Last Causal Conv1D for AMD MI308                     ║
+║  Comprehensive Test Suite (Basic + seq_idx + states)          ║
+╚════════════════════════════════════════════════════════════════╝
+
+Checking GPU...
+✓ Found 8 GPU(s)
+
+Device Information:
+  Name:              AMD Instinct MI308X
+  Compute Units:     80
+  Wavefront Size:    64
+  Global Memory:     196592 MB
+  Shared Mem/Block:  64 KB
+
+
+======================================================================
+  PART 1: Basic Functionality Tests (27 test cases)
+  测试配置与 rocm_fwd_perf_summary.txt 保持一致
+======================================================================
+
+======================================================================
+Test: dim64-seq128-w4
+  Config: batch=2, dim=64, seqlen=128, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.836 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006230 ms
+    Bandwidth:    21.24 GB/s
+    Throughput:   2.63 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 0.089 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.096e-09
+  Speedup:         0.11x
+  Errors (>0.00): 0 / 16384
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim64-seq512-w4
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.037 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006378 ms
+    Bandwidth:    82.41 GB/s
+    Throughput:   10.28 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 0.300 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.176e-09
+  Speedup:         8.11x
+  Errors (>0.00): 0 / 65536
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim64-seq512-w4-silu
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.039 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.008179 ms
+    Bandwidth:    64.26 GB/s
+    Throughput:   8.01 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 0.569 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  5.521e-09
+  Speedup:         14.59x
+  Errors (>0.00): 0 / 65536
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim64-seq1024-w4
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.039 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006460 ms
+    Bandwidth:    162.53 GB/s
+    Throughput:   20.29 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 0.595 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.191e-09
+  Speedup:         15.26x
+  Errors (>0.00): 0 / 131072
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim64-seq1024-w4-silu
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.037 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.008261 ms
+    Bandwidth:    127.08 GB/s
+    Throughput:   15.87 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 1.129 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  5.531e-09
+  Speedup:         30.51x
+  Errors (>0.00): 0 / 131072
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim64-seq2048-w4
+  Config: batch=2, dim=64, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.040 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007691 ms
+    Bandwidth:    272.85 GB/s
+    Throughput:   34.09 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 1.157 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.199e-09
+  Speedup:         28.92x
+  Errors (>0.00): 0 / 262144
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq256-w4
+  Config: batch=4, dim=256, seqlen=256, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.037 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007593 ms
+    Bandwidth:    276.88 GB/s
+    Throughput:   34.53 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 1.092 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.478e-09
+  Speedup:         29.51x
+  Errors (>0.00): 0 / 262144
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq512-w4
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.041 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.010302 ms
+    Bandwidth:    407.62 GB/s
+    Throughput:   50.89 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 1.963 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.506e-09
+  Speedup:         47.88x
+  Errors (>0.00): 0 / 524288
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq512-w4-silu
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.041 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.012625 ms
+    Bandwidth:    332.62 GB/s
+    Throughput:   41.53 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 3.646 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  5.198e-09
+  Speedup:         88.93x
+  Errors (>0.00): 0 / 524288
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq1024-w4
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.048 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.018330 ms
+    Bandwidth:    457.91 GB/s
+    Throughput:   57.20 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 4.098 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.517e-09
+  Speedup:         85.38x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq1024-w4-silu
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.050 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.021697 ms
+    Bandwidth:    386.86 GB/s
+    Throughput:   48.33 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 7.406 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  5.204e-09
+  Speedup:         148.12x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim256-seq2048-w4
+  Config: batch=4, dim=256, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.076 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.030662 ms
+    Bandwidth:    547.33 GB/s
+    Throughput:   68.39 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 8.073 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  9.524e-09
+  Speedup:         106.22x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim512-seq512-w4
+  Config: batch=4, dim=512, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.055 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.018342 ms
+    Bandwidth:    457.90 GB/s
+    Throughput:   57.17 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 4.073 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  1.199e-08
+  Speedup:         74.05x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim512-seq1024-w4
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.061 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.030751 ms
+    Bandwidth:    545.92 GB/s
+    Throughput:   68.20 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 8.030 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.200e-08
+  Speedup:         131.64x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim512-seq1024-w4-silu
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.069 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.033681 ms
+    Bandwidth:    498.42 GB/s
+    Throughput:   62.26 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 14.712 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  6.331e-09
+  Speedup:         213.22x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim512-seq2048-w4
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.090 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.053764 ms
+    Bandwidth:    624.30 GB/s
+    Throughput:   78.01 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 16.369 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  1.201e-08
+  Speedup:         181.88x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim512-seq2048-w4-silu
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.096 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.058150 ms
+    Bandwidth:    577.21 GB/s
+    Throughput:   72.13 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 29.440 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  6.337e-09
+  Speedup:         306.67x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq512-w4
+  Config: batch=8, dim=1024, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.092 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.053310 ms
+    Bandwidth:    629.80 GB/s
+    Throughput:   78.68 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 16.039 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.076e-08
+  Speedup:         174.34x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq1024-w4
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.137 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.095779 ms
+    Bandwidth:    700.87 GB/s
+    Throughput:   87.58 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 31.464 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.077e-08
+  Speedup:         229.66x
+  Errors (>0.00): 0 / 8388608
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq1024-w4-silu
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.148 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.103183 ms
+    Bandwidth:    650.59 GB/s
+    Throughput:   81.30 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 58.329 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  6.390e-09
+  Speedup:         394.11x
+  Errors (>0.00): 0 / 8388608
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq2048-w4
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.248 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.179935 ms
+    Bandwidth:    746.04 GB/s
+    Throughput:   93.24 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 62.555 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.061e-08
+  Speedup:         252.24x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq2048-w4-silu
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.265 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.193396 ms
+    Bandwidth:    694.11 GB/s
+    Throughput:   86.75 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 117.303 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  6.319e-09
+  Speedup:         442.65x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim1024-seq4096-w4
+  Config: batch=8, dim=1024, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.443 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.351832 ms
+    Bandwidth:    763.02 GB/s
+    Throughput:   95.37 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 128.630 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.001e-08
+  Speedup:         290.36x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim2048-seq1024-w4
+  Config: batch=8, dim=2048, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.238 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.176379 ms
+    Bandwidth:    761.19 GB/s
+    Throughput:   95.12 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 64.488 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.070e-08
+  Speedup:         270.96x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim2048-seq2048-w4
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.432 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.342644 ms
+    Bandwidth:    783.54 GB/s
+    Throughput:   97.93 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 126.059 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  1.006e-08
+  Speedup:         291.80x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim2048-seq2048-w4-silu
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.473 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.371090 ms
+    Bandwidth:    723.48 GB/s
+    Throughput:   90.42 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 234.906 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  6.119e-09
+  Speedup:         496.63x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test: dim2048-seq4096-w4
+  Config: batch=8, dim=2048, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel...
+  GPU time (single run): 0.831 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.809547 ms
+    Bandwidth:    663.23 GB/s
+    Throughput:   82.90 GElements/s
+Copying results from GPU...
+Computing CPU reference...
+  CPU time: 252.517 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.398e-09
+  Speedup:         303.87x
+  Errors (>0.00): 0 / 67108864
+  Status: ✓ PASSED
+
+======================================================================
+  PART 2: seq_idx Tests (Sub-sequence Handling, 27 test cases)
+  测试配置与 PART 1 保持一致
+======================================================================
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq128-w4
+  Config: batch=2, dim=64, seqlen=128, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.055 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007762 ms
+    Bandwidth:    17.05 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 0.085 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.154e-09
+  Speedup:         1.55x
+  Errors (>0.00): 0 / 16384
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq512-w4
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.039 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007834 ms
+    Bandwidth:    67.08 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 0.324 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.427e-09
+  Speedup:         8.31x
+  Errors (>0.00): 0 / 65536
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq512-w4-silu
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.039 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.009715 ms
+    Bandwidth:    54.10 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 0.473 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  3.623e-09
+  Speedup:         12.13x
+  Errors (>0.00): 0 / 65536
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq1024-w4
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.037 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007983 ms
+    Bandwidth:    131.51 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 0.656 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.461e-09
+  Speedup:         17.73x
+  Errors (>0.00): 0 / 131072
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq1024-w4-silu
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.038 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.009780 ms
+    Bandwidth:    107.35 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 0.955 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  3.642e-09
+  Speedup:         25.13x
+  Errors (>0.00): 0 / 131072
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim64-seq2048-w4
+  Config: batch=2, dim=64, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.038 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.009354 ms
+    Bandwidth:    224.34 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 1.340 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.479e-09
+  Speedup:         35.26x
+  Errors (>0.00): 0 / 262144
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq256-w4
+  Config: batch=4, dim=256, seqlen=256, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.038 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.009227 ms
+    Bandwidth:    227.83 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 1.284 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.903e-09
+  Speedup:         33.79x
+  Errors (>0.00): 0 / 262144
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq512-w4
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.042 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.012448 ms
+    Bandwidth:    337.35 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 2.549 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  6.987e-09
+  Speedup:         60.69x
+  Errors (>0.00): 0 / 524288
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq512-w4-silu
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.044 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.014776 ms
+    Bandwidth:    284.21 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 3.702 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  3.650e-09
+  Speedup:         84.14x
+  Errors (>0.00): 0 / 524288
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq1024-w4
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.049 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.020990 ms
+    Bandwidth:    399.90 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 5.067 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  7.028e-09
+  Speedup:         103.41x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq1024-w4-silu
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.053 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.024732 ms
+    Bandwidth:    339.39 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 7.442 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  3.669e-09
+  Speedup:         140.42x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim256-seq2048-w4
+  Config: batch=4, dim=256, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.064 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.034029 ms
+    Bandwidth:    493.17 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 10.518 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  7.049e-09
+  Speedup:         164.34x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim512-seq512-w4
+  Config: batch=4, dim=512, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.050 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.020939 ms
+    Bandwidth:    401.11 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 5.146 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  9.307e-09
+  Speedup:         102.92x
+  Errors (>0.00): 0 / 1048576
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim512-seq1024-w4
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.064 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.034092 ms
+    Bandwidth:    492.41 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 10.163 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  9.363e-09
+  Speedup:         158.80x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim512-seq1024-w4-silu
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.068 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.038617 ms
+    Bandwidth:    434.72 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 14.825 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  4.960e-09
+  Speedup:         218.01x
+  Errors (>0.00): 0 / 2097152
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim512-seq2048-w4
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.093 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.060514 ms
+    Bandwidth:    554.66 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 20.343 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  9.393e-09
+  Speedup:         218.74x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim512-seq2048-w4-silu
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.103 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.066399 ms
+    Bandwidth:    505.50 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 30.253 ms
+Verifying results...
+
+Results:
+  Max difference:  1.192e-07
+  Avg difference:  4.972e-09
+  Speedup:         293.72x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq512-w4
+  Config: batch=8, dim=1024, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.102 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.060101 ms
+    Bandwidth:    558.64 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 20.149 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.427e-09
+  Speedup:         197.54x
+  Errors (>0.00): 0 / 4194304
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq1024-w4
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.156 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.110724 ms
+    Bandwidth:    606.28 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 40.451 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.482e-09
+  Speedup:         259.30x
+  Errors (>0.00): 0 / 8388608
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq1024-w4-silu
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.173 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.120446 ms
+    Bandwidth:    557.34 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 58.979 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  4.963e-09
+  Speedup:         340.92x
+  Errors (>0.00): 0 / 8388608
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq2048-w4
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.276 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.210394 ms
+    Bandwidth:    638.03 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 80.524 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.433e-09
+  Speedup:         291.75x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq2048-w4-silu
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.289 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.228964 ms
+    Bandwidth:    586.29 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 119.166 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  4.952e-09
+  Speedup:         412.34x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim1024-seq4096-w4
+  Config: batch=8, dim=1024, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.506 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.415483 ms
+    Bandwidth:    646.13 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 160.543 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.121e-09
+  Speedup:         317.28x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim2048-seq1024-w4
+  Config: batch=8, dim=2048, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.272 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.208509 ms
+    Bandwidth:    643.90 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 79.882 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.580e-09
+  Speedup:         293.68x
+  Errors (>0.00): 0 / 16777216
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim2048-seq2048-w4
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.498 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.410262 ms
+    Bandwidth:    654.40 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 160.840 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  8.335e-09
+  Speedup:         322.97x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim2048-seq2048-w4-silu
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.531 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.443665 ms
+    Bandwidth:    605.13 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 234.073 ms
+Verifying results...
+
+Results:
+  Max difference:  8.941e-08
+  Avg difference:  5.043e-09
+  Speedup:         440.82x
+  Errors (>0.00): 0 / 33554432
+  Status: ✓ PASSED
+
+======================================================================
+Test (seq_idx): seq_idx-dim2048-seq4096-w4
+  Config: batch=8, dim=2048, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+======================================================================
+Initializing data with seq_idx...
+Allocating GPU memory...
+Copying data to GPU...
+Launching GPU kernel with seq_idx...
+  GPU time: 0.945 ms
+
+Running performance test...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.920574 ms
+    Bandwidth:    583.24 GB/s
+
+Copying results from GPU...
+Computing CPU reference with seq_idx...
+  CPU time: 320.010 ms
+Verifying results...
+
+Results:
+  Max difference:  5.960e-08
+  Avg difference:  7.621e-09
+  Speedup:         338.63x
+  Errors (>0.00): 0 / 67108864
+  Status: ✓ PASSED
+
+======================================================================
+  PART 3: States Tests (Streaming/Chunked Processing, 27 test cases)
+  测试配置与 PART 1 保持一致
+======================================================================
+
+======================================================================
+Test (final_states): states-dim64-seq128-w4
+  Config: batch=2, dim=64, seqlen=128, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 64
+  Chunk 2 length: 64
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 16384
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006355 ms
+    Bandwidth:    20.83 GB/s
+
+======================================================================
+Test (final_states): states-dim64-seq512-w4
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 65536
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006494 ms
+    Bandwidth:    80.94 GB/s
+
+======================================================================
+Test (final_states): states-dim64-seq512-w4-silu
+  Config: batch=2, dim=64, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 65536
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.008193 ms
+    Bandwidth:    64.15 GB/s
+
+======================================================================
+Test (final_states): states-dim64-seq1024-w4
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 131072
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.006639 ms
+    Bandwidth:    158.13 GB/s
+
+======================================================================
+Test (final_states): states-dim64-seq1024-w4-silu
+  Config: batch=2, dim=64, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 131072
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.008352 ms
+    Bandwidth:    125.70 GB/s
+
+======================================================================
+Test (final_states): states-dim64-seq2048-w4
+  Config: batch=2, dim=64, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 262144
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007723 ms
+    Bandwidth:    271.72 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq256-w4
+  Config: batch=4, dim=256, seqlen=256, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 128
+  Chunk 2 length: 128
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 262144
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.007714 ms
+    Bandwidth:    272.51 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq512-w4
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 524288
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.010331 ms
+    Bandwidth:    406.49 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq512-w4-silu
+  Config: batch=4, dim=256, seqlen=512, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 524288
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.012643 ms
+    Bandwidth:    332.15 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq1024-w4
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 1048576
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.018348 ms
+    Bandwidth:    457.48 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq1024-w4-silu
+  Config: batch=4, dim=256, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 1048576
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.021720 ms
+    Bandwidth:    386.45 GB/s
+
+======================================================================
+Test (final_states): states-dim256-seq2048-w4
+  Config: batch=4, dim=256, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 2097152
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.030830 ms
+    Bandwidth:    544.36 GB/s
+
+======================================================================
+Test (final_states): states-dim512-seq512-w4
+  Config: batch=4, dim=512, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 1048576
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.018359 ms
+    Bandwidth:    457.47 GB/s
+
+======================================================================
+Test (final_states): states-dim512-seq1024-w4
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 2097152
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.030800 ms
+    Bandwidth:    545.05 GB/s
+
+======================================================================
+Test (final_states): states-dim512-seq1024-w4-silu
+  Config: batch=4, dim=512, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 2097152
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.033668 ms
+    Bandwidth:    498.62 GB/s
+
+======================================================================
+Test (final_states): states-dim512-seq2048-w4
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 4194304
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.053772 ms
+    Bandwidth:    624.20 GB/s
+
+======================================================================
+Test (final_states): states-dim512-seq2048-w4-silu
+  Config: batch=4, dim=512, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 4194304
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.058321 ms
+    Bandwidth:    575.52 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq512-w4
+  Config: batch=8, dim=1024, seqlen=512, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 256
+  Chunk 2 length: 256
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 4194304
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.053419 ms
+    Bandwidth:    628.52 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq1024-w4
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 8388608
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.095986 ms
+    Bandwidth:    699.37 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq1024-w4-silu
+  Config: batch=8, dim=1024, seqlen=1024, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 8388608
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.103638 ms
+    Bandwidth:    647.73 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq2048-w4
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 16777216
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.179507 ms
+    Bandwidth:    747.82 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq2048-w4-silu
+  Config: batch=8, dim=1024, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 16777216
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.193319 ms
+    Bandwidth:    694.39 GB/s
+
+======================================================================
+Test (final_states): states-dim1024-seq4096-w4
+  Config: batch=8, dim=1024, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 2048
+  Chunk 2 length: 2048
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 33554432
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.351782 ms
+    Bandwidth:    763.13 GB/s
+
+======================================================================
+Test (final_states): states-dim2048-seq1024-w4
+  Config: batch=8, dim=2048, seqlen=1024, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 512
+  Chunk 2 length: 512
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 16777216
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.176485 ms
+    Bandwidth:    760.74 GB/s
+
+======================================================================
+Test (final_states): states-dim2048-seq2048-w4
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 33554432
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.342976 ms
+    Bandwidth:    782.78 GB/s
+
+======================================================================
+Test (final_states): states-dim2048-seq2048-w4-silu
+  Config: batch=8, dim=2048, seqlen=2048, width=4
+  Bias=Yes, SiLU=Yes
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 1024
+  Chunk 2 length: 1024
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-03): 0 / 33554432
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.371501 ms
+    Bandwidth:    722.68 GB/s
+
+======================================================================
+Test (final_states): states-dim2048-seq4096-w4
+  Config: batch=8, dim=2048, seqlen=4096, width=4
+  Bias=Yes, SiLU=No
+  Testing chunked processing with states
+======================================================================
+Initializing data...
+Allocating GPU memory...
+
+[Step 1] Processing full sequence...
+  Full sequence processing complete
+
+[Step 2] Processing in chunks with states...
+  Chunk 1 length: 2048
+  Chunk 2 length: 2048
+  Processing chunk 1...
+  Processing chunk 2 with initial states...
+  Chunked processing complete
+
+[Verification] Comparing full vs chunked outputs...
+
+Results:
+  Max difference:  0.00e+00
+  Avg difference:  0.00e+00
+  Errors (>1.00e-04): 0 / 67108864
+  Status: ✓ PASSED
+
+  ✓ Chunked processing with states produces identical results!
+
+[Performance Test] Measuring full sequence processing performance...
+  Warmup: 10 iterations...
+  Performance test: 100 iterations...
+
+  Performance Results:
+    Average time: 0.811171 ms
+    Bandwidth:    661.90 GB/s
+
+======================================================================
+Test Summary:
+  Total:  81
+  Passed: 81 ✓
+  Failed: 0 ✗
+======================================================================
+
+=========================================
+Test Results Summary
+=========================================
+
+Test Summary:
+  Total:  81
+  Passed: 81 ✓
+  Failed: 0 ✗
+
+─────────────────────────────────────────
+PART 1: Basic Functionality Tests
+─────────────────────────────────────────
+  Test: dim64-seq128-w4
+    Status: ✓ PASSED
+  Test: dim64-seq512-w4
+    Status: ✓ PASSED
+  Test: dim64-seq512-w4-silu
+    Status: ✓ PASSED
+  Test: dim64-seq1024-w4
+    Status: ✓ PASSED
+  Test: dim64-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test: dim64-seq2048-w4
+    Status: ✓ PASSED
+  Test: dim256-seq256-w4
+    Status: ✓ PASSED
+  Test: dim256-seq512-w4
+    Status: ✓ PASSED
+  Test: dim256-seq512-w4-silu
+    Status: ✓ PASSED
+  Test: dim256-seq1024-w4
+    Status: ✓ PASSED
+  Test: dim256-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test: dim256-seq2048-w4
+    Status: ✓ PASSED
+  Test: dim512-seq512-w4
+    Status: ✓ PASSED
+  Test: dim512-seq1024-w4
+    Status: ✓ PASSED
+  Test: dim512-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test: dim512-seq2048-w4
+    Status: ✓ PASSED
+  Test: dim512-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test: dim1024-seq512-w4
+    Status: ✓ PASSED
+  Test: dim1024-seq1024-w4
+    Status: ✓ PASSED
+  Test: dim1024-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test: dim1024-seq2048-w4
+    Status: ✓ PASSED
+  Test: dim1024-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test: dim1024-seq4096-w4
+    Status: ✓ PASSED
+  Test: dim2048-seq1024-w4
+    Status: ✓ PASSED
+  Test: dim2048-seq2048-w4
+    Status: ✓ PASSED
+  Test: dim2048-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test: dim2048-seq4096-w4
+    Status: ✓ PASSED
+
+─────────────────────────────────────────
+PART 2: seq_idx Tests
+─────────────────────────────────────────
+  Test (seq_idx): seq_idx-dim64-seq128-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim64-seq512-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim64-seq512-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim64-seq1024-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim64-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim64-seq2048-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq256-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq512-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq512-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq1024-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim256-seq2048-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim512-seq512-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim512-seq1024-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim512-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim512-seq2048-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim512-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq512-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq1024-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq1024-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq2048-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim1024-seq4096-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim2048-seq1024-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim2048-seq2048-w4
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim2048-seq2048-w4-silu
+    Status: ✓ PASSED
+  Test (seq_idx): seq_idx-dim2048-seq4096-w4
+    Status: ✓ PASSED
+
+─────────────────────────────────────────
+PART 3: final_states Tests
+─────────────────────────────────────────
+  Test (final_states): states-dim64-seq128-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim64-seq512-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim64-seq512-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim64-seq1024-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim64-seq1024-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim64-seq2048-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq256-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq512-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq512-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq1024-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq1024-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim256-seq2048-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim512-seq512-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim512-seq1024-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim512-seq1024-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim512-seq2048-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim512-seq2048-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq512-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq1024-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq1024-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq2048-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq2048-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim1024-seq4096-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim2048-seq1024-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim2048-seq2048-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim2048-seq2048-w4-silu
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+  Test (final_states): states-dim2048-seq4096-w4
+    Status: ✓ PASSED
+    ✓ Chunked processing with states produces identical results!
+
+─────────────────────────────────────────
+Precision: seq_idx Tests
+─────────────────────────────────────────
+    Max difference:  5.960e-08
+    Max difference:  5.960e-08
+    Max difference:  5.960e-08
+
+─────────────────────────────────────────
+Precision: final_states Tests
+─────────────────────────────────────────
+    Max difference:  0.00e+00
+    Max difference:  0.00e+00
+    Max difference:  0.00e+00
+
+
+=========================================
+Final Status
+=========================================
+
+╔═══════════════════════════════════════════════════════════════╗
+║                     ✅ ALL TESTS PASSED! ✅                    ║
+╚═══════════════════════════════════════════════════════════════╝
+
+  Total Tests: 81
+  Passed: 81 ✓
+  Failed: 0
+
+  ✓ All functionalities validated
+    - Basic operations
+    - seq_idx (sub-sequence handling)
+    - final_states (streaming/chunked processing)
+
+────────────────────────────────────────────────────────────────
+Tip: You can run specific test categories:
+  test_rocm_channellast_fwd_kernel.sh 1  - Run basic functionality tests only
+  test_rocm_channellast_fwd_kernel.sh 2  - Run seq_idx tests only
+  test_rocm_channellast_fwd_kernel.sh 3  - Run final_states tests only
+
+Save test results to file:
+  test_rocm_channellast_fwd_kernel.sh 1 --save-output  - Run tests and save to channellast_test_results.txt
+────────────────────────────────────────────────────────────────
+
