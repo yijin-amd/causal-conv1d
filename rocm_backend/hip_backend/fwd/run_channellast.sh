@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # Enhanced build and run script for channel-last kernel with test mode selection
-set -e
+# Note: Not using 'set -e' to allow better error handling
+set -o pipefail
 
 # ==================== Configuration ====================
 
@@ -67,11 +68,28 @@ echo ""
 
 print_section "Checking Prerequisites"
 
+# Check for hipcc
 if ! command -v hipcc &> /dev/null; then
     echo "✗ Error: hipcc not found"
+    echo "  Please install ROCm and ensure hipcc is in your PATH"
+    echo ""
+    echo "Press Enter to exit..."
+    read -r
     exit 1
 fi
 echo "✓ hipcc found"
+
+# Check for test source file
+if [ ! -f "test_causal_conv1d_channellast.cpp" ]; then
+    echo "✗ Error: test_causal_conv1d_channellast.cpp not found"
+    echo "  Please ensure you are in the correct directory"
+    echo "  Current directory: $(pwd)"
+    echo ""
+    echo "Press Enter to exit..."
+    read -r
+    exit 1
+fi
+echo "✓ Test source file found"
 
 # Detect GPU architecture
 GPU_ARCH=""
@@ -93,14 +111,31 @@ HIPCC_FLAGS="-O2 -std=c++17 $GPU_ARCH"
 echo "Flags: $HIPCC_FLAGS"
 echo ""
 
+# Compile and capture both stdout and stderr
 hipcc $HIPCC_FLAGS \
-    conv1d_hip_channellast.cpp \
-    -o conv1d_hip_channellast 2>&1 | tee compile_channellast.log
+    test_causal_conv1d_channellast.cpp \
+    -o test_causal_conv1d_channellast 2>&1 | tee compile_channellast.log
 
-if [ ${PIPESTATUS[0]} -ne 0 ]; then
+# Check compilation status
+COMPILE_STATUS=$?
+if [ $COMPILE_STATUS -ne 0 ]; then
     echo ""
-    echo "✗ Compilation failed"
+    echo "✗ Compilation failed with exit code: $COMPILE_STATUS"
     echo "See compile_channellast.log for details"
+    echo ""
+    echo "Press Enter to exit..."
+    read -r
+    exit 1
+fi
+
+# Also check if the output file was created
+if [ ! -f conv1d_hip_channellast ]; then
+    echo ""
+    echo "✗ Compilation output file not created"
+    echo "See compile_channellast.log for details"
+    echo ""
+    echo "Press Enter to exit..."
+    read -r
     exit 1
 fi
 
@@ -116,12 +151,15 @@ echo ""
 OUTPUT_FILE="/tmp/channellast_test_$$.log"
 
 if command -v timeout &> /dev/null; then
-    timeout 300 ./conv1d_hip_channellast $TEST_MODE 2>&1 | tee "$OUTPUT_FILE"
-    EXIT_CODE=${PIPESTATUS[0]}
+    timeout 300 ./test_causal_conv1d_channellast $TEST_MODE 2>&1 | tee "$OUTPUT_FILE"
+    EXIT_CODE=$?
     
     if [ $EXIT_CODE -eq 124 ]; then
         echo ""
         echo "✗ Test timed out after 5 minutes"
+        echo ""
+        echo "Press Enter to exit..."
+        read -r
         rm -f "$OUTPUT_FILE"
         exit 124
     fi
@@ -307,6 +345,12 @@ if [ "$TEST_MODE" = "0" ]; then
 fi
 
 echo ""
+
+# Optional: Pause before exit to prevent terminal from closing
+if [ -n "$PAUSE_ON_EXIT" ]; then
+    echo "Press Enter to exit..."
+    read -r
+fi
 
 # Cleanup
 rm -f "$OUTPUT_FILE"
