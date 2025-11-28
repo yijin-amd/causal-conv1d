@@ -159,7 +159,7 @@ bool run_test(const char* name, int batch, int dim, int seqlen, int width,
     hipStream_t stream;
     HIP_CHECK(hipStreamCreate(&stream));
     
-    // Launch kernel
+    // Launch kernel (single run for correctness check)
     std::cout << "Launching GPU kernel..." << std::endl;
     auto gpu_start = std::chrono::high_resolution_clock::now();
     
@@ -170,8 +170,59 @@ bool run_test(const char* name, int batch, int dim, int seqlen, int width,
     auto gpu_end = std::chrono::high_resolution_clock::now();
     auto gpu_time = std::chrono::duration_cast<std::chrono::microseconds>(gpu_end - gpu_start);
     
-    std::cout << "  GPU time: " << std::fixed << std::setprecision(3) 
+    std::cout << "  GPU time (single run): " << std::fixed << std::setprecision(3) 
               << gpu_time.count() / 1000.0 << " ms" << std::endl;
+    
+    // Performance test with multiple iterations
+    std::cout << "\nRunning performance test..." << std::endl;
+    
+    // Create events for accurate timing
+    hipEvent_t start_event, stop_event;
+    HIP_CHECK(hipEventCreate(&start_event));
+    HIP_CHECK(hipEventCreate(&stop_event));
+    
+    // Warmup runs
+    const int warmup_iters = 10;
+    std::cout << "  Warmup: " << warmup_iters << " iterations..." << std::endl;
+    for (int i = 0; i < warmup_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params, stream);
+    }
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Performance measurement
+    const int perf_iters = 100;
+    std::cout << "  Performance test: " << perf_iters << " iterations..." << std::endl;
+    
+    HIP_CHECK(hipEventRecord(start_event, stream));
+    for (int i = 0; i < perf_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params, stream);
+    }
+    HIP_CHECK(hipEventRecord(stop_event, stream));
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Calculate timing
+    float milliseconds = 0;
+    HIP_CHECK(hipEventElapsedTime(&milliseconds, start_event, stop_event));
+    float avg_time_ms = milliseconds / perf_iters;
+    
+    // Calculate bandwidth
+    // Data transferred: read x, read weight, read bias (if used), write out
+    float bytes_transferred = x_size * sizeof(float) * 2 +  // read x, write out
+                              weight_size * sizeof(float) +  // read weight
+                              (use_bias ? bias_size * sizeof(float) : 0);  // read bias (optional)
+    float bandwidth_gb_s = (bytes_transferred / 1e9) / (avg_time_ms / 1000.0f);
+    
+    std::cout << "\n  Performance Results:" << std::endl;
+    std::cout << "    Average time: " << std::fixed << std::setprecision(6) 
+              << avg_time_ms << " ms" << std::endl;
+    std::cout << "    Bandwidth:    " << std::fixed << std::setprecision(2) 
+              << bandwidth_gb_s << " GB/s" << std::endl;
+    std::cout << "    Throughput:   " << std::fixed << std::setprecision(2) 
+              << (x_size / (avg_time_ms / 1000.0f) / 1e9) << " GElements/s" << std::endl;
+    
+    // Cleanup events
+    HIP_CHECK(hipEventDestroy(start_event));
+    HIP_CHECK(hipEventDestroy(stop_event));
     
     // Copy results back
     std::cout << "Copying results from GPU..." << std::endl;
@@ -421,8 +472,57 @@ bool run_test_seq_idx(const char* name, int batch, int dim, int seqlen, int widt
     std::cout << "  GPU time: " << std::fixed << std::setprecision(3) 
               << gpu_time.count() / 1000.0 << " ms" << std::endl;
     
+    // Performance test with multiple iterations
+    std::cout << "\nRunning performance test..." << std::endl;
+    
+    // Create events for accurate timing
+    hipEvent_t start_event, stop_event;
+    HIP_CHECK(hipEventCreate(&start_event));
+    HIP_CHECK(hipEventCreate(&stop_event));
+    
+    // Warmup runs
+    const int warmup_iters = 10;
+    std::cout << "  Warmup: " << warmup_iters << " iterations..." << std::endl;
+    for (int i = 0; i < warmup_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params, stream);
+    }
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Performance measurement
+    const int perf_iters = 100;
+    std::cout << "  Performance test: " << perf_iters << " iterations..." << std::endl;
+    
+    HIP_CHECK(hipEventRecord(start_event, stream));
+    for (int i = 0; i < perf_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params, stream);
+    }
+    HIP_CHECK(hipEventRecord(stop_event, stream));
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Calculate timing
+    float milliseconds = 0;
+    HIP_CHECK(hipEventElapsedTime(&milliseconds, start_event, stop_event));
+    float avg_time_ms = milliseconds / perf_iters;
+    
+    // Calculate bandwidth
+    // Data transferred: read x, read weight, read bias (if used), write out
+    float bytes_transferred = x_size * sizeof(float) * 2 +  // read x, write out
+                              weight_size * sizeof(float);   // read weight
+    if (use_bias) {
+        bytes_transferred += bias_size * sizeof(float);      // read bias
+    }
+    float bandwidth_gb_s = (bytes_transferred / 1e9) / (avg_time_ms / 1000.0f);
+    
+    std::cout << "\n  Performance Results:" << std::endl;
+    std::cout << "    Average time: " << std::fixed << std::setprecision(6) << avg_time_ms << " ms" << std::endl;
+    std::cout << "    Bandwidth:    " << std::fixed << std::setprecision(2) << bandwidth_gb_s << " GB/s" << std::endl;
+    
+    // Cleanup events
+    HIP_CHECK(hipEventDestroy(start_event));
+    HIP_CHECK(hipEventDestroy(stop_event));
+    
     // Copy results back
-    std::cout << "Copying results from GPU..." << std::endl;
+    std::cout << "\nCopying results from GPU..." << std::endl;
     HIP_CHECK(hipMemcpy(h_out_gpu.data(), d_out, x_size * sizeof(float), hipMemcpyDeviceToHost));
     
     // Compute CPU reference
@@ -718,6 +818,55 @@ bool run_test_final_states(const char* name, int batch, int dim, int seqlen, int
         std::cout << "\n  ✓ Chunked processing with states produces identical results!" << std::endl;
     }
     
+    // ========== Performance test on full sequence ==========
+    std::cout << "\n[Performance Test] Measuring full sequence processing performance..." << std::endl;
+    
+    // Create events for accurate timing
+    hipEvent_t start_event, stop_event;
+    HIP_CHECK(hipEventCreate(&start_event));
+    HIP_CHECK(hipEventCreate(&stop_event));
+    
+    // Warmup runs
+    const int warmup_iters = 10;
+    std::cout << "  Warmup: " << warmup_iters << " iterations..." << std::endl;
+    for (int i = 0; i < warmup_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params_full, stream);
+    }
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Performance measurement
+    const int perf_iters = 100;
+    std::cout << "  Performance test: " << perf_iters << " iterations..." << std::endl;
+    
+    HIP_CHECK(hipEventRecord(start_event, stream));
+    for (int i = 0; i < perf_iters; ++i) {
+        causal_conv1d_channellast_fwd_launch<128, 4>(params_full, stream);
+    }
+    HIP_CHECK(hipEventRecord(stop_event, stream));
+    HIP_CHECK(hipStreamSynchronize(stream));
+    
+    // Calculate timing
+    float milliseconds = 0;
+    HIP_CHECK(hipEventElapsedTime(&milliseconds, start_event, stop_event));
+    float avg_time_ms = milliseconds / perf_iters;
+    
+    // Calculate bandwidth
+    // Data transferred: read x, read weight, read bias (if used), write out
+    float bytes_transferred = x_size * sizeof(float) * 2 +  // read x, write out
+                              weight_size * sizeof(float);   // read weight
+    if (use_bias) {
+        bytes_transferred += bias_size * sizeof(float);      // read bias
+    }
+    float bandwidth_gb_s = (bytes_transferred / 1e9) / (avg_time_ms / 1000.0f);
+    
+    std::cout << "\n  Performance Results:" << std::endl;
+    std::cout << "    Average time: " << std::fixed << std::setprecision(6) << avg_time_ms << " ms" << std::endl;
+    std::cout << "    Bandwidth:    " << std::fixed << std::setprecision(2) << bandwidth_gb_s << " GB/s" << std::endl;
+    
+    // Cleanup events
+    HIP_CHECK(hipEventDestroy(start_event));
+    HIP_CHECK(hipEventDestroy(stop_event));
+    
     // Cleanup
     HIP_CHECK(hipFree(d_x));
     HIP_CHECK(hipFree(d_weight));
@@ -795,72 +944,142 @@ int main(int argc, char* argv[]) {
     int passed = 0;
     
     // PART 1: Basic Functionality Tests
+    // 测试用例与 rocm_fwd_perf_summary.txt 完全一致 (27个用例)
+    // 注意: bias 默认为 true (与CUDA版本一致)
     if (test_mode == 0 || test_mode == 1) {
         std::cout << "\n" << std::string(70, '=') << std::endl;
-        std::cout << "  PART 1: Basic Functionality Tests" << std::endl;
+        std::cout << "  PART 1: Basic Functionality Tests (27 test cases)" << std::endl;
+        std::cout << "  测试配置与 rocm_fwd_perf_summary.txt 保持一致" << std::endl;
         std::cout << std::string(70, '=') << std::endl;
         
-        // Test 1: Tiny (sanity check)
-        total++;
-        if (run_test("Tiny Test", 1, 32, 64, 4, true, false)) passed++;
+        // ========== dim=64 测试 ==========
+        total++; if (run_test("dim64-seq128-w4", 2, 64, 128, 4, true, false)) passed++;
+        total++; if (run_test("dim64-seq512-w4", 2, 64, 512, 4, true, false)) passed++;
+        total++; if (run_test("dim64-seq512-w4-silu", 2, 64, 512, 4, true, true)) passed++;
+        total++; if (run_test("dim64-seq1024-w4", 2, 64, 1024, 4, true, false)) passed++;
+        total++; if (run_test("dim64-seq1024-w4-silu", 2, 64, 1024, 4, true, true)) passed++;
+        total++; if (run_test("dim64-seq2048-w4", 2, 64, 2048, 4, true, false)) passed++;
         
-        // Test 2: Small without bias
-        total++;
-        if (run_test("Small (No Bias)", 2, 64, 128, 4, false, false)) passed++;
+        // ========== dim=256 测试 ==========
+        total++; if (run_test("dim256-seq256-w4", 4, 256, 256, 4, true, false)) passed++;
+        total++; if (run_test("dim256-seq512-w4", 4, 256, 512, 4, true, false)) passed++;
+        total++; if (run_test("dim256-seq512-w4-silu", 4, 256, 512, 4, true, true)) passed++;
+        total++; if (run_test("dim256-seq1024-w4", 4, 256, 1024, 4, true, false)) passed++;
+        total++; if (run_test("dim256-seq1024-w4-silu", 4, 256, 1024, 4, true, true)) passed++;
+        total++; if (run_test("dim256-seq2048-w4", 4, 256, 2048, 4, true, false)) passed++;
         
-        // Test 3: Small with bias
-        total++;
-        if (run_test("Small (With Bias)", 2, 64, 128, 4, true, false)) passed++;
+        // ========== dim=512 测试 ==========
+        total++; if (run_test("dim512-seq512-w4", 4, 512, 512, 4, true, false)) passed++;
+        total++; if (run_test("dim512-seq1024-w4", 4, 512, 1024, 4, true, false)) passed++;
+        total++; if (run_test("dim512-seq1024-w4-silu", 4, 512, 1024, 4, true, true)) passed++;
+        total++; if (run_test("dim512-seq2048-w4", 4, 512, 2048, 4, true, false)) passed++;
+        total++; if (run_test("dim512-seq2048-w4-silu", 4, 512, 2048, 4, true, true)) passed++;
         
-        // Test 4: With SiLU
-        total++;
-        if (run_test("With SiLU", 2, 64, 128, 4, true, true)) passed++;
+        // ========== dim=1024 测试 ==========
+        total++; if (run_test("dim1024-seq512-w4", 8, 1024, 512, 4, true, false)) passed++;
+        total++; if (run_test("dim1024-seq1024-w4", 8, 1024, 1024, 4, true, false)) passed++;
+        total++; if (run_test("dim1024-seq1024-w4-silu", 8, 1024, 1024, 4, true, true)) passed++;
+        total++; if (run_test("dim1024-seq2048-w4", 8, 1024, 2048, 4, true, false)) passed++;
+        total++; if (run_test("dim1024-seq2048-w4-silu", 8, 1024, 2048, 4, true, true)) passed++;
+        total++; if (run_test("dim1024-seq4096-w4", 8, 1024, 4096, 4, true, false)) passed++;
         
-        // Test 5: Medium size
-        total++;
-        if (run_test("Medium Size", 2, 128, 256, 4, true, false)) passed++;
-        
-        // Test 6: Larger dimensions
-        total++;
-        if (run_test("Large Dimensions", 2, 256, 512, 4, true, true)) passed++;
+        // ========== dim=2048 测试 ==========
+        total++; if (run_test("dim2048-seq1024-w4", 8, 2048, 1024, 4, true, false)) passed++;
+        total++; if (run_test("dim2048-seq2048-w4", 8, 2048, 2048, 4, true, false)) passed++;
+        total++; if (run_test("dim2048-seq2048-w4-silu", 8, 2048, 2048, 4, true, true)) passed++;
+        total++; if (run_test("dim2048-seq4096-w4", 8, 2048, 4096, 4, true, false)) passed++;
     }
     
     // PART 2: seq_idx Tests
+    // 测试用例与 PART 1 完全一致 (27个用例)
     if (test_mode == 0 || test_mode == 2) {
         std::cout << "\n" << std::string(70, '=') << std::endl;
-        std::cout << "  PART 2: seq_idx Tests (Sub-sequence Handling)" << std::endl;
+        std::cout << "  PART 2: seq_idx Tests (Sub-sequence Handling, 27 test cases)" << std::endl;
+        std::cout << "  测试配置与 PART 1 保持一致" << std::endl;
         std::cout << std::string(70, '=') << std::endl;
         
-        // Test 7: seq_idx with small size
-        total++;
-        if (run_test_seq_idx("seq_idx Small", 2, 64, 128, 4, true, false)) passed++;
+        // ========== dim=64 测试 ==========
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq128-w4", 2, 64, 128, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq512-w4", 2, 64, 512, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq512-w4-silu", 2, 64, 512, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq1024-w4", 2, 64, 1024, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq1024-w4-silu", 2, 64, 1024, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim64-seq2048-w4", 2, 64, 2048, 4, true, false)) passed++;
         
-        // Test 8: seq_idx with SiLU
-        total++;
-        if (run_test_seq_idx("seq_idx with SiLU", 2, 64, 128, 4, true, true)) passed++;
+        // ========== dim=256 测试 ==========
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq256-w4", 4, 256, 256, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq512-w4", 4, 256, 512, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq512-w4-silu", 4, 256, 512, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq1024-w4", 4, 256, 1024, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq1024-w4-silu", 4, 256, 1024, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim256-seq2048-w4", 4, 256, 2048, 4, true, false)) passed++;
         
-        // Test 9: seq_idx with larger size
-        total++;
-        if (run_test_seq_idx("seq_idx Medium", 2, 128, 256, 4, true, false)) passed++;
+        // ========== dim=512 测试 ==========
+        total++; if (run_test_seq_idx("seq_idx-dim512-seq512-w4", 4, 512, 512, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim512-seq1024-w4", 4, 512, 1024, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim512-seq1024-w4-silu", 4, 512, 1024, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim512-seq2048-w4", 4, 512, 2048, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim512-seq2048-w4-silu", 4, 512, 2048, 4, true, true)) passed++;
+        
+        // ========== dim=1024 测试 ==========
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq512-w4", 8, 1024, 512, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq1024-w4", 8, 1024, 1024, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq1024-w4-silu", 8, 1024, 1024, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq2048-w4", 8, 1024, 2048, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq2048-w4-silu", 8, 1024, 2048, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim1024-seq4096-w4", 8, 1024, 4096, 4, true, false)) passed++;
+        
+        // ========== dim=2048 测试 ==========
+        total++; if (run_test_seq_idx("seq_idx-dim2048-seq1024-w4", 8, 2048, 1024, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim2048-seq2048-w4", 8, 2048, 2048, 4, true, false)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim2048-seq2048-w4-silu", 8, 2048, 2048, 4, true, true)) passed++;
+        total++; if (run_test_seq_idx("seq_idx-dim2048-seq4096-w4", 8, 2048, 4096, 4, true, false)) passed++;
     }
     
     // PART 3: States Tests
+    // 测试用例与 PART 1 完全一致 (27个用例)
     if (test_mode == 0 || test_mode == 3) {
         std::cout << "\n" << std::string(70, '=') << std::endl;
-        std::cout << "  PART 3: States Tests (Streaming/Chunked Processing)" << std::endl;
+        std::cout << "  PART 3: States Tests (Streaming/Chunked Processing, 27 test cases)" << std::endl;
+        std::cout << "  测试配置与 PART 1 保持一致" << std::endl;
         std::cout << std::string(70, '=') << std::endl;
         
-        // Test 10: final_states with small size
-        total++;
-        if (run_test_final_states("States Small", 2, 64, 128, 4, true, false)) passed++;
+        // ========== dim=64 测试 ==========
+        total++; if (run_test_final_states("states-dim64-seq128-w4", 2, 64, 128, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim64-seq512-w4", 2, 64, 512, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim64-seq512-w4-silu", 2, 64, 512, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim64-seq1024-w4", 2, 64, 1024, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim64-seq1024-w4-silu", 2, 64, 1024, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim64-seq2048-w4", 2, 64, 2048, 4, true, false)) passed++;
         
-        // Test 11: final_states with SiLU
-        total++;
-        if (run_test_final_states("States with SiLU", 2, 64, 128, 4, true, true)) passed++;
+        // ========== dim=256 测试 ==========
+        total++; if (run_test_final_states("states-dim256-seq256-w4", 4, 256, 256, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim256-seq512-w4", 4, 256, 512, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim256-seq512-w4-silu", 4, 256, 512, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim256-seq1024-w4", 4, 256, 1024, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim256-seq1024-w4-silu", 4, 256, 1024, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim256-seq2048-w4", 4, 256, 2048, 4, true, false)) passed++;
         
-        // Test 12: final_states with larger size
-        total++;
-        if (run_test_final_states("States Medium", 2, 128, 256, 4, true, false)) passed++;
+        // ========== dim=512 测试 ==========
+        total++; if (run_test_final_states("states-dim512-seq512-w4", 4, 512, 512, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim512-seq1024-w4", 4, 512, 1024, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim512-seq1024-w4-silu", 4, 512, 1024, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim512-seq2048-w4", 4, 512, 2048, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim512-seq2048-w4-silu", 4, 512, 2048, 4, true, true)) passed++;
+        
+        // ========== dim=1024 测试 ==========
+        total++; if (run_test_final_states("states-dim1024-seq512-w4", 8, 1024, 512, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim1024-seq1024-w4", 8, 1024, 1024, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim1024-seq1024-w4-silu", 8, 1024, 1024, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim1024-seq2048-w4", 8, 1024, 2048, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim1024-seq2048-w4-silu", 8, 1024, 2048, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim1024-seq4096-w4", 8, 1024, 4096, 4, true, false)) passed++;
+        
+        // ========== dim=2048 测试 ==========
+        total++; if (run_test_final_states("states-dim2048-seq1024-w4", 8, 2048, 1024, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim2048-seq2048-w4", 8, 2048, 2048, 4, true, false)) passed++;
+        total++; if (run_test_final_states("states-dim2048-seq2048-w4-silu", 8, 2048, 2048, 4, true, true)) passed++;
+        total++; if (run_test_final_states("states-dim2048-seq4096-w4", 8, 2048, 4096, 4, true, false)) passed++;
     }
     
     // Summary

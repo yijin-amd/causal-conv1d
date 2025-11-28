@@ -6,6 +6,8 @@ set -e
 # ==================== Configuration ====================
 
 TEST_MODE=0  # Default: run all tests
+SAVE_OUTPUT=0  # Default: don't save to file
+OUTPUT_FILE="channellast_test_results.txt"
 
 # Parse command line arguments
 if [ $# -gt 0 ]; then
@@ -13,13 +15,21 @@ if [ $# -gt 0 ]; then
     if [ "$TEST_MODE" != "0" ] && [ "$TEST_MODE" != "1" ] && [ "$TEST_MODE" != "2" ] && [ "$TEST_MODE" != "3" ]; then
         echo "✗ Invalid test mode: $TEST_MODE"
         echo ""
-        echo "Usage: $0 [mode]"
+        echo "Usage: $0 [mode] [--save-output]"
         echo "  mode 0 or omit: Run all tests (default)"
         echo "  mode 1: Run basic functionality tests only"
         echo "  mode 2: Run seq_idx tests only"
         echo "  mode 3: Run final_states tests only"
+        echo ""
+        echo "Options:"
+        echo "  --save-output: Save test results to $OUTPUT_FILE"
         exit 1
     fi
+fi
+
+# Check for --save-output flag
+if [ $# -gt 1 ] && [ "$2" == "--save-output" ]; then
+    SAVE_OUTPUT=1
 fi
 
 # ==================== Functions ====================
@@ -113,20 +123,20 @@ print_section "Running Tests"
 echo ""
 
 # Run with timeout (5 minutes)
-OUTPUT_FILE="/tmp/channellast_test_$$.log"
+TEMP_OUTPUT_FILE="/tmp/channellast_test_$$.log"
 
 if command -v timeout &> /dev/null; then
-    timeout 300 ./test_rocm_channellast_fwd_conv1d_hip $TEST_MODE 2>&1 | tee "$OUTPUT_FILE"
+    timeout 300 ./test_rocm_channellast_fwd_conv1d_hip $TEST_MODE 2>&1 | tee "$TEMP_OUTPUT_FILE"
     EXIT_CODE=${PIPESTATUS[0]}
     
     if [ $EXIT_CODE -eq 124 ]; then
         echo ""
         echo "✗ Test timed out after 5 minutes"
-        rm -f "$OUTPUT_FILE"
+        rm -f "$TEMP_OUTPUT_FILE"
         exit 124
     fi
 else
-    ./test_rocm_channellast_fwd_conv1d_hip $TEST_MODE 2>&1 | tee "$OUTPUT_FILE"
+    ./test_rocm_channellast_fwd_conv1d_hip $TEST_MODE 2>&1 | tee "$TEMP_OUTPUT_FILE"
     EXIT_CODE=$?
 fi
 
@@ -136,8 +146,8 @@ print_section "Test Results Summary"
 echo ""
 
 # Extract summary
-if grep -q "Test Summary:" "$OUTPUT_FILE"; then
-    grep -A 3 "Test Summary:" "$OUTPUT_FILE"
+if grep -q "Test Summary:" "$TEMP_OUTPUT_FILE"; then
+    grep -A 3 "Test Summary:" "$TEMP_OUTPUT_FILE"
     echo ""
 else
     echo "⚠ Could not extract test summary"
@@ -151,8 +161,8 @@ if [ "$TEST_MODE" = "0" ]; then
     echo "─────────────────────────────────────────"
     echo "PART 1: Basic Functionality Tests"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 1:" "$OUTPUT_FILE"; then
-        awk '/PART 1: Basic/,/PART 2:/' "$OUTPUT_FILE" | grep -E "Test: |Status:" | sed 's/^/  /'
+    if grep -q "PART 1:" "$TEMP_OUTPUT_FILE"; then
+        awk '/PART 1: Basic/,/PART 2:/' "$TEMP_OUTPUT_FILE" | grep -E "Test: |Status:" | sed 's/^/  /'
     else
         echo "  (Not run)"
     fi
@@ -161,8 +171,8 @@ if [ "$TEST_MODE" = "0" ]; then
     echo "─────────────────────────────────────────"
     echo "PART 2: seq_idx Tests"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 2:" "$OUTPUT_FILE"; then
-        awk '/PART 2: seq_idx/,/PART 3:/' "$OUTPUT_FILE" | grep -E "Test \(seq_idx\)|Status:" | sed 's/^/  /'
+    if grep -q "PART 2:" "$TEMP_OUTPUT_FILE"; then
+        awk '/PART 2: seq_idx/,/PART 3:/' "$TEMP_OUTPUT_FILE" | grep -E "Test \(seq_idx\)|Status:" | sed 's/^/  /'
     else
         echo "  (Not run)"
     fi
@@ -171,8 +181,8 @@ if [ "$TEST_MODE" = "0" ]; then
     echo "─────────────────────────────────────────"
     echo "PART 3: final_states Tests"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 3:" "$OUTPUT_FILE"; then
-        awk '/PART 3: States/,/Test Summary/' "$OUTPUT_FILE" | grep -E "Test \(final_states\)|Status:|Chunked processing with states" | sed 's/^/  /'
+    if grep -q "PART 3:" "$TEMP_OUTPUT_FILE"; then
+        awk '/PART 3: States/,/Test Summary/' "$TEMP_OUTPUT_FILE" | grep -E "Test \(final_states\)|Status:|Chunked processing with states" | sed 's/^/  /'
     else
         echo "  (Not run)"
     fi
@@ -183,8 +193,8 @@ elif [ "$TEST_MODE" = "1" ]; then
     echo "─────────────────────────────────────────"
     echo "Basic Functionality Tests Details"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 1:" "$OUTPUT_FILE"; then
-        grep -E "Test: |Status:|Max difference:" "$OUTPUT_FILE" | sed 's/^/  /'
+    if grep -q "PART 1:" "$TEMP_OUTPUT_FILE"; then
+        grep -E "Test: |Status:|Max difference:" "$TEMP_OUTPUT_FILE" | sed 's/^/  /'
     fi
     echo ""
     
@@ -193,8 +203,8 @@ elif [ "$TEST_MODE" = "2" ]; then
     echo "─────────────────────────────────────────"
     echo "seq_idx Tests Details"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 2:" "$OUTPUT_FILE"; then
-        grep -E "Test \(seq_idx\)|Status:|Max difference:" "$OUTPUT_FILE" | sed 's/^/  /'
+    if grep -q "PART 2:" "$TEMP_OUTPUT_FILE"; then
+        grep -E "Test \(seq_idx\)|Status:|Max difference:" "$TEMP_OUTPUT_FILE" | sed 's/^/  /'
     fi
     echo ""
     
@@ -209,8 +219,8 @@ elif [ "$TEST_MODE" = "3" ]; then
     echo "─────────────────────────────────────────"
     echo "final_states Tests Details"
     echo "─────────────────────────────────────────"
-    if grep -q "PART 3:" "$OUTPUT_FILE"; then
-        grep -E "Test \(final_states\)|Status:|Max difference:|Chunked processing" "$OUTPUT_FILE" | sed 's/^/  /'
+    if grep -q "PART 3:" "$TEMP_OUTPUT_FILE"; then
+        grep -E "Test \(final_states\)|Status:|Max difference:|Chunked processing" "$TEMP_OUTPUT_FILE" | sed 's/^/  /'
     fi
     echo ""
     
@@ -224,21 +234,21 @@ fi
 # ==================== Precision Analysis ====================
 
 if [ "$TEST_MODE" = "0" ] || [ "$TEST_MODE" = "2" ]; then
-    if grep -q "seq_idx" "$OUTPUT_FILE"; then
+    if grep -q "seq_idx" "$TEMP_OUTPUT_FILE"; then
         echo "─────────────────────────────────────────"
         echo "Precision: seq_idx Tests"
         echo "─────────────────────────────────────────"
-        awk '/seq_idx/,/Status:/' "$OUTPUT_FILE" | grep "Max difference:" | sed 's/^/  /' | head -3
+        awk '/seq_idx/,/Status:/' "$TEMP_OUTPUT_FILE" | grep "Max difference:" | sed 's/^/  /' | head -3
         echo ""
     fi
 fi
 
 if [ "$TEST_MODE" = "0" ] || [ "$TEST_MODE" = "3" ]; then
-    if grep -q "final_states" "$OUTPUT_FILE"; then
+    if grep -q "final_states" "$TEMP_OUTPUT_FILE"; then
         echo "─────────────────────────────────────────"
         echo "Precision: final_states Tests"
         echo "─────────────────────────────────────────"
-        awk '/final_states/,/Status:/' "$OUTPUT_FILE" | grep "Max difference:" | sed 's/^/  /' | head -3
+        awk '/final_states/,/Status:/' "$TEMP_OUTPUT_FILE" | grep "Max difference:" | sed 's/^/  /' | head -3
         echo ""
     fi
 fi
@@ -249,9 +259,9 @@ print_section "Final Status"
 echo ""
 
 # Check if all tests passed
-TOTAL_TESTS=$(grep "Total:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}')
-PASSED_TESTS=$(grep "Passed:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}')
-FAILED_TESTS=$(grep "Failed:" "$OUTPUT_FILE" | tail -1 | awk '{print $2}')
+TOTAL_TESTS=$(grep "Total:" "$TEMP_OUTPUT_FILE" | tail -1 | awk '{print $2}')
+PASSED_TESTS=$(grep "Passed:" "$TEMP_OUTPUT_FILE" | tail -1 | awk '{print $2}')
+FAILED_TESTS=$(grep "Failed:" "$TEMP_OUTPUT_FILE" | tail -1 | awk '{print $2}')
 
 if [ "$EXIT_CODE" -eq 0 ] && [ "$FAILED_TESTS" = "0" ]; then
     echo "╔═══════════════════════════════════════════════════════════════╗"
@@ -303,12 +313,70 @@ if [ "$TEST_MODE" = "0" ]; then
     echo "  $0 1  - Run basic functionality tests only"
     echo "  $0 2  - Run seq_idx tests only"
     echo "  $0 3  - Run final_states tests only"
+    echo ""
+    echo "Save test results to file:"
+    echo "  $0 1 --save-output  - Run tests and save to $OUTPUT_FILE"
     echo "────────────────────────────────────────────────────────────────"
 fi
 
 echo ""
 
+# ==================== Save Output if Requested ====================
+
+if [ "$SAVE_OUTPUT" = "1" ]; then
+    echo "────────────────────────────────────────────────────────────────"
+    echo "Saving test results to: $OUTPUT_FILE"
+    echo "────────────────────────────────────────────────────────────────"
+    
+    # Copy the full output to the specified file
+    cp "$TEMP_OUTPUT_FILE" "$OUTPUT_FILE"
+    
+    echo "✓ Test results saved successfully!"
+    echo ""
+    echo "You can view the results with:"
+    echo "  cat $OUTPUT_FILE"
+    echo "  less $OUTPUT_FILE"
+    echo ""
+    
+    # Also extract performance data to a separate summary file
+    PERF_SUMMARY_FILE="channellast_perf_summary.txt"
+    
+    echo "Extracting performance summary to: $PERF_SUMMARY_FILE"
+    
+    {
+        echo "================================================================================================"
+        echo "Channel-Last Kernel Performance Summary"
+        echo "Extracted from: $OUTPUT_FILE"
+        echo "Test Date: $(date '+%Y-%m-%d %H:%M:%S')"
+        echo "================================================================================================"
+        echo ""
+        echo "Performance Data (Average time and Bandwidth):"
+        echo "================================================================================================"
+        echo ""
+        
+        # Extract all test names and their performance data
+        grep -E "Test: |Average time:|Bandwidth:" "$TEMP_OUTPUT_FILE" | \
+        awk '
+        /Test: / { test=$0; getline; getline }
+        /Average time:/ { time=$3; getline }
+        /Bandwidth:/ { bw=$2; if (test != "") print test " | Time: " time " | BW: " bw; test="" }
+        '
+        
+        echo ""
+        echo "================================================================================================"
+        echo "Test Summary:"
+        echo "================================================================================================"
+        grep -A 3 "Test Summary:" "$TEMP_OUTPUT_FILE" | tail -4
+        echo ""
+        echo "================================================================================================"
+        
+    } > "$PERF_SUMMARY_FILE"
+    
+    echo "✓ Performance summary saved to: $PERF_SUMMARY_FILE"
+    echo ""
+fi
+
 # Cleanup
-rm -f "$OUTPUT_FILE"
+rm -f "$TEMP_OUTPUT_FILE"
 
 exit $EXIT_CODE
